@@ -1,0 +1,153 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 391421ff1ba2df34c826c1fdd6a61d2d, type: 3}
+  m_Name: MercedesAMGGTR_PlayerCar
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerCarConfig
+  visual:
+    bodyPrefab: {fileID: 7754784111764005080, guid: d73dd0ef44c8f5448a73b57f11f7b439, type: 3}
+    wheelPrefab: {fileID: 7719241193873247119, guid: 5b3e105503d4bbb4c8cc779b608b8070, type: 3}
+    addBodyCollider: 0
+    generateConvexBodyColliders: 1
+    wheelBase: 2.75
+    axleWidth: 1.5
+    zOffset: 0
+    wheelHeight: 0.35
+    bodyRootHeightFactor: 0.3
+    liveWheelPositions: 1
+    useDefaultPaint: 1
+    defaultPaint: {r: 1, g: 1, b: 1, a: 1}
+    paintProperty: _MainColor
+    paintAllChildRenderers: 1
+    paintRenderers: []
+  damage:
+    damageTexture: {fileID: 8400000, guid: d30131a27aff3504499d8de538e16e74, type: 2}
+    targetRenderer: {fileID: 0}
+    targetMaterials: []
+    textureProperty: _MainTex
+    textureWidth: 8
+    textureHeight: 16
+    obstacleTag: Obstacle
+    impulseToColor: 0.0025
+    maxColorStep: 0.35
+    impulseToRadius: 0.02
+    maxRadiusCells: 3
+    minSpeedForDamageKmh: 5
+    maxSpeedForDamageKmh: 80
+    minDamageScale: 0.01
+    glancingDamageScale: 0.2
+    impactAlignmentPower: 1.5
+    speedDamageCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    speedRadiusBoost: 0.4
+    damageFalloff:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    verticalDamageFalloff:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 0.5
+        value: 0.5
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    deformMeshWithCompute: 1
+    damageDeformCompute: {fileID: 7200000, guid: 782db1cd1b137f14f8ce6a93268fc6a2, type: 3}
+    deformIgnoreNameFragments: []
+    computeUseNormals: 1
+    computeRecalculateNormals: 1
+    computeDeformAmplitude: 0.08
+    computeDeformDirection: -1
+    computeDeformSinFrequency: 10
+    computeDeformSinStrength: 0.25
+    computeYieldThreshold: 0.15
+    computeHardening: 2
+    computeMaxDeform: 0.25
+    computeTwoLevelDamage: 1
+    computeCoarseRadius: 2
+    computeCoarseWeight: 0.5
+    computeCoarseBoost: 1.5
+    computeCoarseDeformMeters: 0.3
+    includeTriggers: 0
+    includeWheelColliders: 0
+    showDebugVoxels: 1
+    debugVoxelHeightScale: 1
+    debugVoxelOpacity: 0.5
+    debugVoxelYOffset: 0.02
+    debugVoxelScale: 0.98

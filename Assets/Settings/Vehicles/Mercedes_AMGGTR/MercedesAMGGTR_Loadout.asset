@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e328cade975aa44cb5551224731483b, type: 3}
+  m_Name: MercedesAMGGTR_Loadout
+  m_EditorClassIdentifier: 
+  displayName: Mercedes AMG GT R
+  playerCarConfig: {fileID: 11400000, guid: 4337a8e7314b4362b3992a2fcadccaec, type: 2}
+  handlingConfig: {fileID: 11400000, guid: 0064233419754ecf9709a7f0c74b646c, type: 2}
+  engineConfigs:
+  - {fileID: 11400000, guid: 5d529a11480d452ca7da9792c5c9cfb0, type: 2}
+  - {fileID: 11400000, guid: c09f8ad425f14316995d277c06768e67, type: 2}
+  - {fileID: 11400000, guid: 2c5a57a4f40a48b79b4c7061beca7472, type: 2}
+  suspensionConfigs:
+  - {fileID: 11400000, guid: d5c2ee4f3dd54e9cae9e79ffd99f9b0a, type: 2}
+  - {fileID: 11400000, guid: 9b93690299254c03b5dd08e90bcaa704, type: 2}
+  - {fileID: 11400000, guid: f93c1ccbfe144c10b168bf7efe831a37, type: 2}
+  paintOptions:
+  - {fileID: 11400000, guid: 4b5f1f7c1b5f4b6ea2f7c7f4a0b31f25, type: 2}
+  - {fileID: 11400000, guid: 5b7e9a9d74b6438b8b91f3a2a9b5a3c2, type: 2}
+  - {fileID: 11400000, guid: 3a7c7c3fe8ad44d69024bb5a0cf6a2ef, type: 2}
+  - {fileID: 11400000, guid: 5a9c2d3e4f5b4a1c9d2e3f4a5b6c7d8e, type: 2}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  defaultEngineIndex: 1
+  defaultSuspensionIndex: 1
+  defaultPaintIndex: 0
+

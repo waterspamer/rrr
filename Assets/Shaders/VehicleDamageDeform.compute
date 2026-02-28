@@ -1,0 +1,152 @@
+#pragma kernel Deform
+
+Texture2D<float4> _DamageTex;
+SamplerState sampler_DamageTex;
+
+StructuredBuffer<float3> _Vertices;
+StructuredBuffer<float3> _Normals;
+RWStructuredBuffer<float4> _Output;
+
+float4 _VehicleSize;
+float4 _TexResolution;
+float4 _BoundsMin;
+float4 _BoundsSize;
+float _DamageAmplitude;
+float _DamageDirection;
+float _DamageSinFrequency;
+float _DamageSinStrength;
+float _YieldThreshold;
+float _Hardening;
+float _MaxDeform;
+int _UseTwoLevelDamage;
+int _CoarseRadius;
+float _CoarseWeight;
+float _CoarseBoost;
+float _CoarseDeformMeters;
+int _UseNormals;
+int _VertexCount;
+float4x4 _MeshToWorld;
+float4x4 _WorldToCar;
+float4x4 _CarToMesh;
+
+float2 GetVehicleUV(float3 posOS, float3 boundsMin, float3 boundsSize)
+{
+    float2 uv;
+    uv.x = (posOS.x - boundsMin.x) / max(boundsSize.x, 0.0001f);
+    uv.y = (posOS.z - boundsMin.z) / max(boundsSize.z, 0.0001f);
+    return uv;
+}
+
+float GetLayerSample(float2 cellIndex, float layerIndex, float2 texResolution)
+{
+    float2 cellUV = (cellIndex + 0.5f) / texResolution;
+    float3 sampled = _DamageTex.SampleLevel(sampler_DamageTex, cellUV, 0).rgb;
+    float3 channelMask = float3(step(2.0f, layerIndex), step(1.0f, layerIndex) - step(2.0f, layerIndex), 1.0f - step(1.0f, layerIndex));
+    return dot(sampled, channelMask);
+}
+
+float GetTotalSample(float2 cellIndex, float2 texResolution)
+{
+    float2 cellUV = (cellIndex + 0.5f) / texResolution;
+    float3 sampled = _DamageTex.SampleLevel(sampler_DamageTex, cellUV, 0).rgb;
+    return saturate((sampled.r + sampled.g + sampled.b) / 3.0f);
+}
+
+float2 GetCellIndex(float3 carLocalPos, float3 boundsMin, float3 boundsSize, float2 texResolution)
+{
+    float2 uvVehicle = saturate(GetVehicleUV(carLocalPos, boundsMin, boundsSize));
+    float2 cellIndex = floor(uvVehicle * texResolution);
+    return clamp(cellIndex, float2(0.0f, 0.0f), texResolution - 1.0f);
+}
+
+float GetLayerIndex(float3 carLocalPos, float3 boundsMin, float3 boundsSize)
+{
+    float height01 = saturate((carLocalPos.y - boundsMin.y) / max(boundsSize.y, 0.0001f));
+    return min(2.0f, floor(height01 * 3.0f));
+}
+
+float GetFineDamageValue(float3 carLocalPos, float3 boundsMin, float3 boundsSize, float2 texResolution)
+{
+    float2 cellIndex = GetCellIndex(carLocalPos, boundsMin, boundsSize, texResolution);
+    float layerIndex = GetLayerIndex(carLocalPos, boundsMin, boundsSize);
+    return saturate(GetLayerSample(cellIndex, layerIndex, texResolution));
+}
+
+float GetDamageValue(float3 carLocalPos, float3 boundsMin, float3 boundsSize, float2 texResolution)
+{
+    float2 cellIndex = GetCellIndex(carLocalPos, boundsMin, boundsSize, texResolution);
+    float layerIndex = GetLayerIndex(carLocalPos, boundsMin, boundsSize);
+    float fine = saturate(GetLayerSample(cellIndex, layerIndex, texResolution));
+
+    if (_UseTwoLevelDamage == 0 || _CoarseWeight <= 0.0001f)
+        return fine;
+
+    int coarseRadius = max(0, _CoarseRadius);
+    float sum = 0.0f;
+    int count = 0;
+    for (int ox = -coarseRadius; ox <= coarseRadius; ox++)
+    {
+        for (int oy = -coarseRadius; oy <= coarseRadius; oy++)
+        {
+            float2 idx = cellIndex + float2(ox, oy);
+            idx = clamp(idx, float2(0.0f, 0.0f), texResolution - 1.0f);
+            sum += GetTotalSample(idx, texResolution);
+            count++;
+        }
+    }
+
+    float coarse = count > 0 ? sum / count : fine;
+    return saturate(lerp(fine, coarse, saturate(_CoarseWeight)));
+}
+
+[numthreads(64, 1, 1)]
+void Deform(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_VertexCount)
+        return;
+
+    float3 pos = _Vertices[id.x];
+    float3 normal = _Normals[id.x];
+
+    float4 worldPos = mul(_MeshToWorld, float4(pos, 1.0f));
+    float3 carLocalPos = mul(_WorldToCar, worldPos).xyz;
+
+    float fineDamage = GetFineDamageValue(carLocalPos, _BoundsMin.xyz, _BoundsSize.xyz, _TexResolution.xy);
+    float coarseDamage = GetDamageValue(carLocalPos, _BoundsMin.xyz, _BoundsSize.xyz, _TexResolution.xy);
+    float dist = length(carLocalPos);
+    float wave = sin(dist * _DamageSinFrequency) * _DamageSinStrength;
+    float yield = saturate(_YieldThreshold);
+    float fineBaseDamage = max(0.0f, fineDamage - yield) / max(0.0001f, 1.0f - yield);
+    float finePlastic = 1.0f - exp(-fineBaseDamage * _Hardening);
+    float fineDeform = min(finePlastic * _DamageAmplitude, _MaxDeform) * (1.0f + wave);
+
+    float3 dirMeshFine;
+    if (_UseNormals != 0)
+        dirMeshFine = normalize(normal);
+    else
+    {
+        float3 carDir = normalize(carLocalPos);
+        dirMeshFine = normalize(mul(_CarToMesh, float4(carDir, 0.0f)).xyz);
+    }
+
+    float3 inwardMesh = float3(0.0f, 0.0f, 0.0f);
+    float coarseDeform = 0.0f;
+    if (_UseTwoLevelDamage != 0 && _CoarseWeight > 0.0001f)
+    {
+        float coarseBaseDamage = max(0.0f, coarseDamage - yield) / max(0.0001f, 1.0f - yield);
+        float coarsePlastic = 1.0f - exp(-coarseBaseDamage * _Hardening);
+        coarseDeform = min(coarsePlastic * _CoarseDeformMeters * _CoarseBoost, _CoarseDeformMeters) * saturate(_CoarseWeight);
+
+        float carLenSq = dot(carLocalPos, carLocalPos);
+        if (carLenSq > 1e-8f)
+        {
+            float3 inwardCar = -carLocalPos * rsqrt(carLenSq);
+            inwardMesh = normalize(mul(_CarToMesh, float4(inwardCar, 0.0f)).xyz);
+        }
+    }
+
+    float3 fineOffset = dirMeshFine * fineDeform * _DamageDirection;
+    float3 coarseOffset = inwardMesh * coarseDeform;
+    float3 newPos = pos + fineOffset + coarseOffset;
+    _Output[id.x] = float4(newPos, saturate(1.0f - max(fineDamage, coarseDamage)));
+}

@@ -1,0 +1,83 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2cbae00741dbfca46a40e59e61702f65, type: 3}
+  m_Name: VehicleSettings_Arcade
+  m_EditorClassIdentifier: 
+  driveType: 1
+  horsepower: 120
+  gearbox:
+    finalDrive: 3.6
+    reverseRatio: 3.1
+    forwardGears:
+    - 3.1
+    - 2.2
+    - 1.6
+    - 1.2
+    - 1
+    shiftDuration: 0.18
+    automatic: 1
+    upshiftRpm: 6000
+    downshiftRpm: 2500
+    allowAutoReverse: 1
+  engine:
+    idleRpm: 900
+    maxRpm: 7000
+    rpmResponse: 12
+  autoCreateHud: 1
+  maxSteerAngle: 32
+  brakePower: 2500
+  handbrakePower: 5000
+  wheelRadius: 0.35
+  wheelWidth: 0.2
+  mass: 1200
+  suspensionDistance: 0.2
+  suspensionSpringFront: 32000
+  suspensionSpringRear: 30000
+  suspensionDamperFront: 4200
+  suspensionDamperRear: 4000
+  forwardFriction: 1.6
+  sidewaysFriction: 1.5
+  downforce: 40
+  antiRollForce: 4000
+  centerOfMassHeight: 0.25
+  rollingResistance: 18
+  aerodynamicDrag: 0.3
+  forwardExtremumSlip: 1
+  forwardExtremumValue: 1
+  forwardAsymptoteSlip: 2
+  forwardAsymptoteValue: 0.6
+  sidewaysExtremumSlip: 1.2
+  sidewaysExtremumValue: 0.9
+  sidewaysAsymptoteSlip: 2.5
+  sidewaysAsymptoteValue: 0.45
+  enableDrift: 1
+  driftSteerThreshold: 0.2
+  driftThrottleThreshold: 0.25
+  driftMinSpeed: 6
+  driftSlipAngle: 8
+  driftTorqueMultiplier: 1.6
+  rearSidewaysStiffnessMultiplier: 0.45
+  rearForwardStiffnessMultiplier: 0.85
+  handbrakeSidewaysStiffnessMultiplier: 0.25
+  handbrakeForwardStiffnessMultiplier: 0.45
+  handbrakeDriftSteerThreshold: 0.15
+  handbrakeDriftSidewaysMultiplier: 0.5
+  handbrakeDriftForwardMultiplier: 0.65
+  frontSlipSteerThreshold: 0.3
+  frontSlipBrakeThreshold: 0.25
+  frontSlipMinSpeed: 8
+  frontSidewaysStiffnessMultiplier: 0.8
+  frontForwardStiffnessMultiplier: 0.95
+  handbrakeAssistMinSpeed: 10
+  handbrakeAssistSteerThreshold: 0.15
+  handbrakeAssistForce: 12000
+  handbrakeAssistRearOffset: 1.4
