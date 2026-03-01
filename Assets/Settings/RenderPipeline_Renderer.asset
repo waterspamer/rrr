@@ -39,7 +39,7 @@ MonoBehaviour:
   m_Name: ReflectRenderPass
   m_EditorClassIdentifier: Assembly-CSharp::ReflectRenderPass
   m_Active: 1
-  renderPass: 550
+  renderPass: 400
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -25,6 +25,21 @@ MonoBehaviour:
   thickness:
     m_OverrideState: 1
     m_Value: 0.08
+  depthCrossTolerance:
+    m_OverrideState: 0
+    m_Value: 2
+  minHitDistance:
+    m_OverrideState: 0
+    m_Value: 0.02
+  hierarchicalTraversal:
+    m_OverrideState: 0
+    m_Value: 0
+  dualLayerThickness:
+    m_OverrideState: 0
+    m_Value: 0
+  dualLayerRadius:
+    m_OverrideState: 0
+    m_Value: 1.5
   missFade:
     m_OverrideState: 1
     m_Value: 1.2
@@ -432,22 +447,37 @@ MonoBehaviour:
     m_Value: 1
   maxDistance:
     m_OverrideState: 1
-    m_Value: 400
+    m_Value: 398
   traceQuality:
     m_OverrideState: 1
     m_Value: 1
   thickness:
     m_OverrideState: 1
     m_Value: 0.005
+  depthCrossTolerance:
+    m_OverrideState: 0
+    m_Value: 2
+  minHitDistance:
+    m_OverrideState: 0
+    m_Value: 0.02
+  hierarchicalTraversal:
+    m_OverrideState: 0
+    m_Value: 0
+  dualLayerThickness:
+    m_OverrideState: 0
+    m_Value: 0
+  dualLayerRadius:
+    m_OverrideState: 0
+    m_Value: 1.5
   missFade:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 6
   fadeDistance:
     m_OverrideState: 1
-    m_Value: 226
+    m_Value: 400
   fresnelFade:
     m_OverrideState: 1
-    m_Value: 0.637
+    m_Value: 1
   refinementSamples:
     m_OverrideState: 1
     m_Value: 12
