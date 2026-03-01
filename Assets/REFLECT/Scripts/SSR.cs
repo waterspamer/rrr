@@ -14,7 +14,9 @@ namespace UnityEngine.Rendering.Universal
         public ClampedFloatParameter fresnelFade = new ClampedFloatParameter(0.8f, 0.0f, 1.0f);
         public ClampedIntParameter refinementSamples = new ClampedIntParameter(5, 0, 12);
         public BoolParameter debugReflectionOnly = new BoolParameter(false);
-        public ClampedIntParameter debugMode = new ClampedIntParameter(0, 0, 6);
+        public ClampedIntParameter debugMode = new ClampedIntParameter(0, 0, 31);
+        public BoolParameter debugLogResources = new BoolParameter(false);
+        public ClampedIntParameter debugLogInterval = new ClampedIntParameter(30, 1, 300);
 
         /// <inheritdoc/>
         public bool IsActive() => enabled.value;

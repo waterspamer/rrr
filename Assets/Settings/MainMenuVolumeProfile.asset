@@ -24,25 +24,31 @@ MonoBehaviour:
     m_Value: 1
   thickness:
     m_OverrideState: 1
-    m_Value: 0.354
+    m_Value: 0.08
   missFade:
     m_OverrideState: 1
-    m_Value: 1
+    m_Value: 1.2
   fadeDistance:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 80
   fresnelFade:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 0.6
   refinementSamples:
     m_OverrideState: 1
-    m_Value: 12
+    m_Value: 6
   debugReflectionOnly:
     m_OverrideState: 1
     m_Value: 0
   debugMode:
     m_OverrideState: 1
     m_Value: 0
+  debugLogResources:
+    m_OverrideState: 0
+    m_Value: 0
+  debugLogInterval:
+    m_OverrideState: 0
+    m_Value: 30
 --- !u!114 &-900000000000000008
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -239,9 +245,9 @@ MonoBehaviour:
     m_Value: 1
   threshold:
     m_OverrideState: 1
-    m_Value: 15.11
+    m_Value: 73.2
   intensity:
-    m_OverrideState: 1
+    m_OverrideState: 0
     m_Value: 0.1
   scatter:
     m_OverrideState: 1
@@ -293,8 +299,8 @@ MonoBehaviour:
   - {fileID: -900000000000000007}
   - {fileID: -900000000000000008}
   - {fileID: 5237972395146051421}
-  - {fileID: -5644451033791915818}
   - {fileID: 4162496308147966097}
+  - {fileID: 7412353377145893993}
 --- !u!114 &4162496308147966097
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -408,3 +414,52 @@ MonoBehaviour:
   chromaticAbberationIntensity:
     m_OverrideState: 0
     m_Value: 0.5
+--- !u!114 &7412353377145893993
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3df4e1e32f0469e42859a646219b6408, type: 3}
+  m_Name: ScreenSpaceReflections
+  m_EditorClassIdentifier: Assembly-CSharp::UnityEngine.Rendering.Universal.ScreenSpaceReflections
+  active: 1
+  enabled:
+    m_OverrideState: 1
+    m_Value: 1
+  maxDistance:
+    m_OverrideState: 1
+    m_Value: 400
+  traceQuality:
+    m_OverrideState: 1
+    m_Value: 1
+  thickness:
+    m_OverrideState: 1
+    m_Value: 0.005
+  missFade:
+    m_OverrideState: 1
+    m_Value: 0
+  fadeDistance:
+    m_OverrideState: 1
+    m_Value: 226
+  fresnelFade:
+    m_OverrideState: 1
+    m_Value: 0.637
+  refinementSamples:
+    m_OverrideState: 1
+    m_Value: 12
+  debugReflectionOnly:
+    m_OverrideState: 1
+    m_Value: 0
+  debugMode:
+    m_OverrideState: 1
+    m_Value: 0
+  debugLogResources:
+    m_OverrideState: 0
+    m_Value: 0
+  debugLogInterval:
+    m_OverrideState: 0
+    m_Value: 30

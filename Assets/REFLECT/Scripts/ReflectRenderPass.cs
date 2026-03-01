@@ -3,10 +3,11 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.RenderGraphModule.Util;
 using UnityEngine.Rendering.Universal;
+using System.Text;
 
-    public class ReflectRenderPass : ScriptableRendererFeature
+public class ReflectRenderPass : ScriptableRendererFeature
 {
-    public RenderPassEvent renderPass = RenderPassEvent.BeforeRenderingPostProcessing;
+    public RenderPassEvent renderPass = RenderPassEvent.AfterRenderingSkybox;
     private const string TraceShaderName = "Hidden/RRR/SSRTrace";
     private Material traceMaterial;
     private SsrPass ssrPass;
@@ -69,7 +70,13 @@ using UnityEngine.Rendering.Universal;
         private static readonly int ResolveRadiusId = Shader.PropertyToID("_ResolveRadius");
         private static readonly int DebugReflectionOnlyId = Shader.PropertyToID("_DebugReflectionOnly");
         private static readonly int DebugModeId = Shader.PropertyToID("_DebugMode");
+        private static readonly int GBuffer0Id = Shader.PropertyToID("_GBuffer0");
+        private static readonly int GBuffer1Id = Shader.PropertyToID("_GBuffer1");
+        private static readonly int GBuffer2Id = Shader.PropertyToID("_GBuffer2");
+        private static readonly int DeferredInputActiveId = Shader.PropertyToID("_DeferredInputActive");
+        private const string DeferredInputKeyword = "_SSR_DEFERRED_INPUT";
         private static readonly MaterialPropertyBlock SharedPropertyBlock = new MaterialPropertyBlock();
+        private static int s_LastLogFrame = -1000000;
         private Material traceMaterial;
         private ScreenSpaceReflections settings;
 #if URP_COMPATIBILITY_MODE
@@ -91,20 +98,94 @@ using UnityEngine.Rendering.Universal;
             float maxSteps = Mathf.Round(Mathf.Lerp(48.0f, 192.0f, quality));
             float rayStep = Mathf.Lerp(0.45f, 0.08f, quality);
             float resolveRadius = Mathf.Lerp(1.8f, 0.45f, quality);
+            float thickness = Mathf.Max(0.02f, settings.thickness.value);
+            float missFade = Mathf.Max(0.5f, settings.missFade.value);
 
             traceMaterial.SetFloat(MaxDistanceId, settings.maxDistance.value);
             traceMaterial.SetFloat(RayStepId, rayStep);
             traceMaterial.SetFloat(MaxStepsId, maxSteps);
             traceMaterial.SetFloat(BinaryStepsId, settings.refinementSamples.value);
-            traceMaterial.SetFloat(ThicknessId, settings.thickness.value);
-            traceMaterial.SetFloat(MissFadeId, settings.missFade.value);
+            traceMaterial.SetFloat(ThicknessId, thickness);
+            traceMaterial.SetFloat(MissFadeId, missFade);
             traceMaterial.SetFloat(TraceQualityId, quality);
-            traceMaterial.SetFloat(SurfaceBiasId, Mathf.Max(0.002f, settings.thickness.value * 0.125f));
+            traceMaterial.SetFloat(SurfaceBiasId, Mathf.Max(0.002f, thickness * 0.125f));
             traceMaterial.SetFloat(FadeDistanceId, settings.fadeDistance.value);
             traceMaterial.SetFloat(FresnelFadeId, settings.fresnelFade.value);
             traceMaterial.SetFloat(ResolveRadiusId, resolveRadius);
             traceMaterial.SetFloat(DebugReflectionOnlyId, settings.debugReflectionOnly.value ? 1.0f : 0.0f);
             traceMaterial.SetFloat(DebugModeId, settings.debugMode.value);
+        }
+
+        private void SetDeferredInputKeyword(bool enabled)
+        {
+            if (traceMaterial == null)
+                return;
+
+            if (enabled)
+                traceMaterial.EnableKeyword(DeferredInputKeyword);
+            else
+                traceMaterial.DisableKeyword(DeferredInputKeyword);
+
+            traceMaterial.SetFloat(DeferredInputActiveId, enabled ? 1.0f : 0.0f);
+        }
+
+        private static void AppendTextureInfo(StringBuilder sb, RenderGraph renderGraph, string name, TextureHandle handle)
+        {
+            if (!handle.IsValid())
+            {
+                sb.Append(name).Append(": invalid").AppendLine();
+                return;
+            }
+
+            TextureDesc desc = renderGraph.GetTextureDesc(handle);
+            sb.Append(name)
+              .Append(": valid ")
+              .Append(desc.width).Append('x').Append(desc.height)
+              .Append(" msaa=").Append(desc.msaaSamples)
+              .Append(" format=").Append(desc.format)
+              .Append(" clear=").Append(desc.clearBuffer)
+              .Append(" name=").Append(desc.name)
+              .AppendLine();
+        }
+
+        private void LogResourcesIfNeeded(
+            RenderGraph renderGraph,
+            UniversalResourceData resources,
+            UniversalRenderingData renderingData,
+            bool hasDeferredGBuffer)
+        {
+            if (settings == null || !settings.debugLogResources.value)
+                return;
+
+            int interval = Mathf.Max(1, settings.debugLogInterval.value);
+            int frame = Time.frameCount;
+            if (frame - s_LastLogFrame < interval)
+                return;
+            s_LastLogFrame = frame;
+
+            StringBuilder sb = new StringBuilder(1024);
+            sb.Append("[SSR] frame=").Append(frame)
+              .Append(" mode=").Append(renderingData.renderingMode)
+              .Append(" deferredInput=").Append(hasDeferredGBuffer)
+              .AppendLine();
+
+            AppendTextureInfo(sb, renderGraph, "activeColor", resources.activeColorTexture);
+            AppendTextureInfo(sb, renderGraph, "activeDepth", resources.activeDepthTexture);
+            AppendTextureInfo(sb, renderGraph, "cameraDepthTexture", resources.cameraDepthTexture);
+            AppendTextureInfo(sb, renderGraph, "cameraNormalsTexture", resources.cameraNormalsTexture);
+
+            if (resources.gBuffer == null)
+            {
+                sb.Append("gBuffer: null").AppendLine();
+            }
+            else
+            {
+                sb.Append("gBuffer.Length=").Append(resources.gBuffer.Length).AppendLine();
+                for (int i = 0; i < resources.gBuffer.Length; i++)
+                    AppendTextureInfo(sb, renderGraph, $"gBuffer[{i}]", resources.gBuffer[i]);
+            }
+
+            Debug.Log(sb.ToString());
         }
 
 #if URP_COMPATIBILITY_MODE
@@ -148,10 +229,19 @@ using UnityEngine.Rendering.Universal;
 
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalRenderingData renderingData = frameData.Get<UniversalRenderingData>();
             if (!resources.activeColorTexture.IsValid() || cameraData.isPreviewCamera)
                 return;
 
             ApplySettingsToMaterial();
+            bool isDeferred = renderingData.renderingMode == RenderingMode.Deferred;
+            bool hasDeferredGBuffer = isDeferred
+                                      && resources.gBuffer != null
+                                      && resources.gBuffer.Length > 2
+                                      && resources.gBuffer[1].IsValid()
+                                      && resources.gBuffer[2].IsValid();
+            SetDeferredInputKeyword(hasDeferredGBuffer);
+            LogResourcesIfNeeded(renderGraph, resources, renderingData, hasDeferredGBuffer);
 
             TextureDesc sourceDesc = renderGraph.GetTextureDesc(resources.activeColorTexture);
             sourceDesc.name = "_RrrSsrSourceRG";
@@ -163,6 +253,7 @@ using UnityEngine.Rendering.Universal;
             {
                 passData.material = traceMaterial;
                 passData.source = source;
+                passData.gBuffer = resources.gBuffer;
 
                 builder.UseTexture(source, AccessFlags.Read);
                 if (resources.cameraDepthTexture.IsValid())
@@ -185,6 +276,12 @@ using UnityEngine.Rendering.Universal;
                     SharedPropertyBlock.Clear();
                     SharedPropertyBlock.SetTexture(BlitTextureId, data.source);
                     SharedPropertyBlock.SetVector(BlitScaleBiasId, new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
+                    if (data.gBuffer != null && data.gBuffer.Length > 2)
+                    {
+                        data.material.SetTexture(GBuffer0Id, data.gBuffer[0]);
+                        data.material.SetTexture(GBuffer1Id, data.gBuffer[1]);
+                        data.material.SetTexture(GBuffer2Id, data.gBuffer[2]);
+                    }
                     rgContext.cmd.DrawProcedural(Matrix4x4.identity, data.material, 0, MeshTopology.Triangles, 3, 1, SharedPropertyBlock);
                 });
             }
@@ -201,6 +298,7 @@ using UnityEngine.Rendering.Universal;
         {
             public Material material;
             public TextureHandle source;
+            public TextureHandle[] gBuffer;
         }
     }
 }

@@ -1,4 +1,4 @@
-Shader "Hidden/RRR/SSRTrace"
+﻿Shader "Hidden/RRR/SSRTrace"
 {
     SubShader
     {
@@ -15,15 +15,17 @@ Shader "Hidden/RRR/SSRTrace"
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma target 4.5
+            #pragma multi_compile_fragment _ _SSR_DEFERRED_INPUT
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareNormalsTexture.hlsl"
 
             TEXTURE2D_X(_BlitTexture);
-            TEXTURE2D_X_HALF(_GBuffer0); // albedo.rgb + materialFlags.a
-            TEXTURE2D_X_HALF(_GBuffer1); // metallic/specular + occlusion
-            TEXTURE2D_X_HALF(_GBuffer2); // normal + smoothness.a
+            TEXTURE2D_X_HALF(_GBuffer0);
+            TEXTURE2D_X_HALF(_GBuffer1);
+            TEXTURE2D_X_HALF(_GBuffer2);
 
             float _MaxDistance;
             float _RayStep;
@@ -38,6 +40,7 @@ Shader "Hidden/RRR/SSRTrace"
             float _ResolveRadius;
             float _DebugReflectionOnly;
             float _DebugMode;
+            float _DeferredInputActive;
 
             struct Attributes
             {
@@ -80,11 +83,23 @@ Shader "Hidden/RRR/SSRTrace"
 
             float2 ProjectToUv(float3 viewPos)
             {
-                float4 clip = mul(UNITY_MATRIX_P, float4(viewPos, 1.0));
-                float2 uv = clip.xy / max(clip.w, 0.00001) * 0.5 + 0.5;
+                float4 clipPos = mul(UNITY_MATRIX_P, float4(viewPos, 1.0));
+                float2 uv = clipPos.xy / max(0.00001, clipPos.w);
+                uv = uv * 0.5 + 0.5;
                 if (_ProjectionParams.x < 0.0)
                     uv.y = 1.0 - uv.y;
                 return uv;
+            }
+
+            float3 DecodeGBufferNormalWS(float3 packedNormal)
+            {
+            #if defined(_GBUFFER_NORMALS_OCT)
+                half2 remappedOctNormalWS = half2(Unpack888ToFloat2(packedNormal));
+                half2 octNormalWS = remappedOctNormalWS * 2.0h - 1.0h;
+                return normalize(half3(UnpackNormalOctQuadEncode(octNormalWS)));
+            #else
+                return normalize(packedNormal);
+            #endif
             }
 
             float3 ReconstructNormalVS(float2 uv, float3 centerVS)
@@ -108,58 +123,125 @@ Shader "Hidden/RRR/SSRTrace"
                 float3 dx = abs(posR.z - centerVS.z) < abs(centerVS.z - posL.z) ? (posR - centerVS) : (centerVS - posL);
                 float3 dy = abs(posU.z - centerVS.z) < abs(centerVS.z - posD.z) ? (posU - centerVS) : (centerVS - posD);
 
-                float3 normal = normalize(cross(dx, dy));
-                if (any(isnan(normal)))
-                    normal = float3(0.0, 1.0, 0.0);
-                return normal;
+                float3 n = normalize(cross(dy, dx));
+                if (any(isnan(n)))
+                    n = float3(0.0, 1.0, 0.0);
+                return n;
             }
 
-            float3 GetSurfaceNormalVS(float2 uv, float3 centerVS)
+            float3 ReadSurfaceNormalVS(float2 uv, float3 centerVS, float3 viewDirVS)
             {
-                float2 texel = 1.0 / _ScreenSize.xy;
-                float3 n0 = SampleSceneNormals(uv);
-                float3 n1 = SampleSceneNormals(clamp(uv + float2(texel.x, 0.0), 0.0, 1.0));
-                float3 n2 = SampleSceneNormals(clamp(uv + float2(-texel.x, 0.0), 0.0, 1.0));
-                float3 n3 = SampleSceneNormals(clamp(uv + float2(0.0, texel.y), 0.0, 1.0));
-                float3 n4 = SampleSceneNormals(clamp(uv + float2(0.0, -texel.y), 0.0, 1.0));
-                float3 normalWS = normalize(n0 * 2.0 + n1 + n2 + n3 + n4);
+                float3 geom = ReconstructNormalVS(uv, centerVS);
+                if (dot(geom, viewDirVS) < 0.0)
+                    geom = -geom;
 
-                // Fallback when normal texture is unavailable/invalid.
-                if (dot(normalWS, normalWS) < 1e-4 || any(isnan(normalWS)))
-                    return ReconstructNormalVS(uv, centerVS);
-
-                return normalize(TransformWorldToViewDir(normalWS, true));
-            }
-
-            float ReadSmoothness(float2 uv)
-            {
-                float4 n = SAMPLE_TEXTURE2D_X(_CameraNormalsTexture, sampler_LinearClamp, uv);
-                float smoothFromNormals = saturate(n.a);
+                float3 nWorld = 0.0;
+            #if defined(_SSR_DEFERRED_INPUT)
                 half4 g2 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_LinearClamp, uv, 0);
-                float smoothFromGBuffer = saturate(g2.a);
-                return max(smoothFromNormals, smoothFromGBuffer);
+                nWorld = DecodeGBufferNormalWS(g2.xyz);
+            #else
+                nWorld = SampleSceneNormals(uv);
+            #endif
+
+                float3 nView = normalize(TransformWorldToViewDir(nWorld, true));
+                bool valid = dot(nView, nView) > 1e-4 && !any(isnan(nView));
+                if (!valid)
+                    return geom;
+
+                if (dot(nView, viewDirVS) < 0.0)
+                    nView = -nView;
+
+                return dot(nView, geom) < -0.6 ? geom : nView;
             }
 
-            float3 ReadAlbedo(float2 uv)
+            float ReadGBufferSmoothness(float2 uv)
             {
-                half4 g0 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer0, sampler_LinearClamp, uv, 0);
-                return saturate(g0.rgb);
+            #if defined(_SSR_DEFERRED_INPUT)
+                half4 g2 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_LinearClamp, uv, 0);
+                return saturate(g2.a);
+            #else
+                return 0.0;
+            #endif
             }
 
-            float ReadMetallic(float2 uv)
+            float ReadCameraNormalsSmoothness(float2 uv)
             {
+                return saturate(SAMPLE_TEXTURE2D_X(_CameraNormalsTexture, sampler_LinearClamp, uv).a);
+            }
+
+            float ReadSmoothness(float2 uv, float3 src)
+            {
+            #if defined(_SSR_DEFERRED_INPUT)
+                float smoothGBuffer = ReadGBufferSmoothness(uv);
+                float smoothNormals = ReadCameraNormalsSmoothness(uv);
+                return max(smoothGBuffer, smoothNormals);
+            #else
+                float luma = dot(src, float3(0.299, 0.587, 0.114));
+                return saturate(0.2 + luma * 0.25);
+            #endif
+            }
+
+            float ReadSpecularStrength(float2 uv)
+            {
+            #if defined(_SSR_DEFERRED_INPUT)
                 half4 g1 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer1, sampler_LinearClamp, uv, 0);
-                return saturate(g1.r);
+                float spec = max(g1.r, max(g1.g, g1.b));
+                // Keep a physically plausible baseline reflectance for dielectrics.
+                return saturate(max(spec, 0.04));
+            #else
+                return 0.2;
+            #endif
             }
 
-            float3 EnvBRDFApprox(float3 f0, float roughness, float nDotV)
+            float ReadSpecularStrengthRaw(float2 uv)
             {
-                float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-                float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-                float4 r = roughness * c0 + c1;
-                float a004 = min(r.x * r.x, exp2(-9.28 * nDotV)) * r.x + r.y;
-                float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
-                return f0 * ab.x + ab.y;
+            #if defined(_SSR_DEFERRED_INPUT)
+                half4 g1 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer1, sampler_LinearClamp, uv, 0);
+                return saturate(max(g1.r, max(g1.g, g1.b)));
+            #else
+                return 0.0;
+            #endif
+            }
+
+            float3 ReadSpecularMaskDebug(float2 uv)
+            {
+            #if defined(_SSR_DEFERRED_INPUT)
+                half4 g1 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer1, sampler_LinearClamp, uv, 0);
+                float specR = saturate(g1.r);
+                float specG = saturate(g1.g);
+                float specB = saturate(g1.b);
+                return float3(specR, specG, specB);
+            #else
+                return 0.0.xxx;
+            #endif
+            }
+
+            float3 ReadSpecularTint(float2 uv)
+            {
+            #if defined(_SSR_DEFERRED_INPUT)
+                half4 g0 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer0, sampler_LinearClamp, uv, 0);
+                half4 g1 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer1, sampler_LinearClamp, uv, 0);
+                float metallic = saturate(g1.r);
+                // Avoid fully tinting reflections to near-black on dark metallic paints.
+                return lerp(1.0.xxx, saturate(g0.rgb), metallic * 0.35);
+            #else
+                return 1.0.xxx;
+            #endif
+            }
+
+            half4 SampleGBuffer0Raw(float2 uv)
+            {
+                return SAMPLE_TEXTURE2D_X_LOD(_GBuffer0, sampler_LinearClamp, uv, 0);
+            }
+
+            half4 SampleGBuffer1Raw(float2 uv)
+            {
+                return SAMPLE_TEXTURE2D_X_LOD(_GBuffer1, sampler_LinearClamp, uv, 0);
+            }
+
+            half4 SampleGBuffer2Raw(float2 uv)
+            {
+                return SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_LinearClamp, uv, 0);
             }
 
             float InterleavedGradientNoise(float2 uv)
@@ -172,7 +254,6 @@ Shader "Hidden/RRR/SSRTrace"
             {
                 int2 p = int2(floor(uv * _ScreenSize.xy)) & 3;
                 int idx = p.x + p.y * 4;
-                // 0..15 / 16
                 const float bayer[16] =
                 {
                     0.0, 8.0, 2.0, 10.0,
@@ -187,7 +268,7 @@ Shader "Hidden/RRR/SSRTrace"
             {
                 float2 texel = 1.0 / _ScreenSize.xy;
                 float2 o = texel * max(0.0, radiusPx);
-                float lod = saturate(roughness) * 3.0;
+                float lod = saturate(roughness) * 2.0;
 
                 float centerRaw = SampleSceneDepth(hitUv);
                 float centerLin = 0.0;
@@ -196,6 +277,9 @@ Shader "Hidden/RRR/SSRTrace"
                     float3 centerVS = ViewPosFromDepth(hitUv, centerRaw);
                     centerLin = -centerVS.z;
                 }
+
+                float3 accum = 0.0;
+                float wsum = 0.0;
 
                 float2 offsets[9] =
                 {
@@ -212,16 +296,12 @@ Shader "Hidden/RRR/SSRTrace"
 
                 float weights[9] = { 4.0, 2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0 };
 
-                float3 accum = 0.0;
-                float wsum = 0.0;
-
                 UNITY_UNROLL
                 for (int i = 0; i < 9; i++)
                 {
-                    float2 suv = hitUv + offsets[i] * o;
+                    float2 suv = clamp(hitUv + offsets[i] * o, 0.001, 0.999);
+                    float3 c = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, suv, lod).rgb;
                     float w = weights[i];
-
-                    // Depth-aware bilateral term to reduce noisy shimmering near edges.
                     if (centerLin > 0.0)
                     {
                         float raw = SampleSceneDepth(suv);
@@ -230,11 +310,9 @@ Shader "Hidden/RRR/SSRTrace"
                             float3 vs = ViewPosFromDepth(suv, raw);
                             float lin = -vs.z;
                             float dz = abs(lin - centerLin);
-                            w *= exp2(-dz * 12.0);
+                            w *= exp2(-dz * 10.0);
                         }
                     }
-
-                    float3 c = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, suv, lod).rgb;
                     accum += c * w;
                     wsum += w;
                 }
@@ -246,93 +324,158 @@ Shader "Hidden/RRR/SSRTrace"
             {
                 float2 uv = input.uv;
                 float3 src = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, uv, 0).rgb;
+                int debugMode = (int)_DebugMode;
+
+                if (debugMode == 15)
+                    return float4(SampleGBuffer0Raw(uv).rgb, 1.0);
+                if (debugMode == 16)
+                    return float4(SampleGBuffer0Raw(uv).aaa, 1.0);
+                if (debugMode == 17)
+                    return float4(SampleGBuffer1Raw(uv).rgb, 1.0);
+                if (debugMode == 18)
+                    return float4(SampleGBuffer1Raw(uv).aaa, 1.0);
+                if (debugMode == 19)
+                    return float4(SampleGBuffer2Raw(uv).rgb, 1.0);
+                if (debugMode == 20)
+                    return float4(SampleGBuffer2Raw(uv).aaa, 1.0);
+                if (debugMode == 21)
+                {
+                    float3 n = SAMPLE_TEXTURE2D_X(_CameraNormalsTexture, sampler_LinearClamp, uv).rgb;
+                    return float4(n, 1.0);
+                }
+                if (debugMode == 22)
+                {
+                    float a = SAMPLE_TEXTURE2D_X(_CameraNormalsTexture, sampler_LinearClamp, uv).a;
+                    return float4(a.xxx, 1.0);
+                }
+                if (debugMode == 26)
+                    return _DeferredInputActive > 0.5 ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+
                 float rawDepth = SampleSceneDepth(uv);
+                if (debugMode == 23)
+                    return float4(rawDepth.xxx, 1.0);
                 if (IsInvalidDepth(rawDepth))
                     return float4(src, 1.0);
 
                 float3 viewPos = ViewPosFromDepth(uv, rawDepth);
-                float3 viewDirVS = normalize(viewPos);
-                float3 normalVS = GetSurfaceNormalVS(uv, viewPos);
-                if (dot(normalVS, -viewDirVS) < 0.0)
-                    normalVS = -normalVS;
-                float smoothness = ReadSmoothness(uv);
-                float smoothMask = smoothness * smoothness;
+                if (debugMode == 24)
+                {
+                    float linearDepthDbg = -viewPos.z;
+                    float scaled = saturate(linearDepthDbg / max(0.001, _MaxDistance));
+                    return float4(scaled.xxx, 1.0);
+                }
+                float3 viewDirVS = normalize(-viewPos);
+                float3 normalVS = ReadSurfaceNormalVS(uv, viewPos, viewDirVS);
+                float smoothness = ReadSmoothness(uv, src);
+                // Buffer smoothness in this project is visibly lower than material slider values.
+                // Remap to keep SSR perceptually responsive on glossy paints.
+                float smoothResponse = saturate(smoothness * 1.35 - 0.2);
+                smoothResponse = max(smoothResponse, smoothness);
+                float specStrengthRaw = ReadSpecularStrengthRaw(uv);
+                float specStrength = ReadSpecularStrength(uv);
+                // Boost low specular values (common for dielectric materials) while preserving range.
+                float specResponse = saturate(sqrt(max(specStrength, 0.04)));
+                float reflectionResponse = saturate(smoothResponse * lerp(0.25, 1.0, specResponse));
+                float rawReflectMask = saturate(smoothness * specStrengthRaw);
+                float gbufferSmoothness = ReadGBufferSmoothness(uv);
+                float cameraNormalSmoothness = ReadCameraNormalsSmoothness(uv);
+                float materialReflectivity = saturate(max(specResponse, max(smoothResponse * 0.25, cameraNormalSmoothness * 0.25)));
 
-                float3 rayDirVS = normalize(reflect(viewDirVS, normalVS));
-                if (rayDirVS.z >= -0.0001 || smoothMask <= 0.0001)
-                    return float4(src, 1.0);
-
-                int debugMode = (int)_DebugMode;
                 if (debugMode == 1)
                     return float4(normalVS * 0.5 + 0.5, 1.0);
                 if (debugMode == 2)
-                    return float4((-viewDirVS) * 0.5 + 0.5, 1.0);
+                    return float4(viewDirVS * 0.5 + 0.5, 1.0);
+                if (debugMode == 7)
+                    return float4(smoothness.xxx, 1.0);
+                if (debugMode == 8)
+                    return float4(specStrength.xxx, 1.0);
+                if (debugMode == 9)
+                {
+                    float3 specMask = ReadSpecularMaskDebug(uv);
+                    return float4(specMask, 1.0);
+                }
+                if (debugMode == 10)
+                    return float4(materialReflectivity.xxx, 1.0);
+                if (debugMode == 11)
+                    return float4(cameraNormalSmoothness.xxx, 1.0);
+                if (debugMode == 12)
+                    return float4(gbufferSmoothness.xxx, 1.0);
+                if (debugMode == 13)
+                    return float4(abs(gbufferSmoothness - cameraNormalSmoothness).xxx, 1.0);
+                if (debugMode == 14)
+                    return float4(smoothness.xxx, 1.0);
+                if (debugMode == 27)
+                    return float4(reflectionResponse.xxx, 1.0);
+                if (debugMode == 28)
+                    return float4(specResponse.xxx, 1.0);
+                if (debugMode == 29)
+                    return float4(rawReflectMask.xxx, 1.0);
+                if (debugMode == 30)
+                    return float4(pow(rawReflectMask.xxx, 1.0 / 2.2), 1.0);
+                if (debugMode == 31)
+                    return float4(specStrengthRaw.xxx, 1.0);
+                if (debugMode == 25)
+                {
+                    float2 localUv = frac(uv * 2.0);
+                    if (uv.x < 0.5 && uv.y >= 0.5)
+                        return float4(SampleGBuffer0Raw(localUv).rgb, 1.0);
+                    if (uv.x >= 0.5 && uv.y >= 0.5)
+                        return float4(SampleGBuffer1Raw(localUv).rgb, 1.0);
+                    if (uv.x < 0.5 && uv.y < 0.5)
+                        return float4(SampleGBuffer2Raw(localUv).aaa, 1.0);
+                    return float4(SAMPLE_TEXTURE2D_X(_CameraNormalsTexture, sampler_LinearClamp, localUv).aaa, 1.0);
+                }
+
+                float3 rayDirVS = normalize(reflect(-viewDirVS, normalVS));
                 if (debugMode == 3)
                     return float4(rayDirVS * 0.5 + 0.5, 1.0);
 
-                float3 startPosVS = viewPos + normalVS * _SurfaceBias;
-                float3 prevPosVS = startPosVS;
-                float3 currPosVS = prevPosVS;
-                float hitTravel = 0.0;
-                float2 hitUv = float2(0.0, 0.0);
-                bool hit = false;
-                bool usedSoftFallback = false;
-                float softFallbackWeight = 1.0;
-                bool hasClosest = false;
-                float closestDelta = 1e6;
-                float2 closestUv = uv;
-                float closestTravel = 0.0;
-                float lastDepthDelta = 0.0;
-                float prevSignedDelta = 1e6;
-                float dither = lerp(Bayer4x4(uv), InterleavedGradientNoise(uv + _Time.yy), 0.5);
+                if (rayDirVS.z >= -1e-4 || smoothResponse <= 1e-4)
+                    return float4(src, 1.0);
+
                 float quality = saturate(_TraceQuality);
-                float jitterAmp = lerp(1.6, 0.2, quality);
-                float stepJitter = lerp(0.65, 0.1, quality);
-                float travel = _RayStep * dither * jitterAmp;
+                float stepBase = _RayStep * lerp(1.7, 0.85, quality);
+                float travel = stepBase * (0.35 + Bayer4x4(uv) * 0.3);
+                float3 startPosVS = viewPos + normalVS * _SurfaceBias;
+
+                float3 prevPosVS = startPosVS;
+                float3 currPosVS = startPosVS;
+                float prevSignedDelta = 1e6;
+                float lastDepthDelta = 1e6;
+                float hitTravel = 0.0;
+                float2 hitUv = 0.0;
+                bool hit = false;
 
                 UNITY_LOOP
                 for (int i = 0; i < (int)_MaxSteps; i++)
                 {
-                    float perStepNoise = InterleavedGradientNoise(uv * (i + 1.0) + float2(i * 0.37, i * 0.71));
-                    float stepScale = 1.0 + (perStepNoise - 0.5) * stepJitter;
-                    float stepSize = _RayStep * (1.0 + i * 0.02) * stepScale;
-                    travel += stepSize;
+                    float step = stepBase * (1.0 + i * 0.02);
+                    travel += step;
                     currPosVS = startPosVS + rayDirVS * travel;
-                    float linearDepth = -currPosVS.z;
-                    if (linearDepth <= 0.0)
-                        break;
 
-                    if (linearDepth > _MaxDistance)
+                    float linearDepth = -currPosVS.z;
+                    if (linearDepth <= 0.0 || linearDepth > _MaxDistance)
                         break;
 
                     float2 rayUv = ProjectToUv(currPosVS);
                     if (IsOutsideScreen(rayUv))
                         break;
 
-                    float sceneRawDepth = SampleSceneDepth(rayUv);
-                    if (IsInvalidDepth(sceneRawDepth))
+                    float sceneRaw = SampleSceneDepth(rayUv);
+                    if (IsInvalidDepth(sceneRaw))
                     {
                         prevPosVS = currPosVS;
                         continue;
                     }
 
-                    float3 sceneVS = ViewPosFromDepth(rayUv, sceneRawDepth);
-                    float sceneLinearDepth = -sceneVS.z;
-                    float signedDelta = sceneLinearDepth - linearDepth;
+                    float3 sceneVS = ViewPosFromDepth(rayUv, sceneRaw);
+                    float signedDelta = currPosVS.z - sceneVS.z;
                     lastDepthDelta = signedDelta;
-                    float thickness = _Thickness;
-                    float absDelta = abs(signedDelta);
-                    if (absDelta < closestDelta)
-                    {
-                        closestDelta = absDelta;
-                        closestUv = rayUv;
-                        closestTravel = distance(startPosVS, currPosVS);
-                        hasClosest = true;
-                    }
 
-                    // Hit only when ray crosses scene depth from front to behind.
-                    bool crossedSurface = prevSignedDelta > 0.0 && signedDelta <= 0.0;
-                    if (crossedSurface && abs(signedDelta) <= thickness)
+                    float thickness = _Thickness * lerp(1.0, 1.6, saturate(linearDepth / max(0.001, _MaxDistance)));
+                    bool crossed = (prevSignedDelta > 0.0 && signedDelta <= 0.0);
+                    bool validCross = crossed && (abs(prevSignedDelta) <= thickness * 8.0 || abs(signedDelta) <= thickness * 4.0);
+                    if (validCross)
                     {
                         float3 low = prevPosVS;
                         float3 high = currPosVS;
@@ -342,7 +485,11 @@ Shader "Hidden/RRR/SSRTrace"
                         {
                             float3 mid = (low + high) * 0.5;
                             float2 midUv = ProjectToUv(mid);
-
+                            if (IsOutsideScreen(midUv))
+                            {
+                                high = mid;
+                                continue;
+                            }
                             float midRaw = SampleSceneDepth(midUv);
                             if (IsInvalidDepth(midRaw))
                             {
@@ -351,10 +498,8 @@ Shader "Hidden/RRR/SSRTrace"
                             }
 
                             float3 midSceneVS = ViewPosFromDepth(midUv, midRaw);
-                            float midLinear = -mid.z;
-                            float midSignedDelta = (-midSceneVS.z) - midLinear;
-
-                            if (midSignedDelta > 0.0)
+                            float midDelta = mid.z - midSceneVS.z;
+                            if (midDelta > 0.0)
                                 low = mid;
                             else
                                 high = mid;
@@ -362,8 +507,11 @@ Shader "Hidden/RRR/SSRTrace"
 
                         float3 refined = (low + high) * 0.5;
                         hitUv = ProjectToUv(refined);
-                        hitTravel = distance(startPosVS, refined);
                         hit = !IsOutsideScreen(hitUv);
+                        hitTravel = distance(startPosVS, refined);
+                        // Reject near-origin intersections that typically produce "streak" artifacts.
+                        if (hitTravel < max(_SurfaceBias * 12.0, _RayStep * 1.5))
+                            hit = false;
                         break;
                     }
 
@@ -379,24 +527,9 @@ Shader "Hidden/RRR/SSRTrace"
 
                 if (!hit)
                 {
-                    float missSoft = 0.0;
-                    if (hasClosest)
-                    {
-                        float softRange = max(0.0001, _Thickness * max(0.001, _MissFade));
-                        missSoft = smoothstep(0.0, 1.0, saturate(1.0 - (closestDelta / softRange)));
-                    }
-
                     if (debugMode == 5)
-                        return float4(missSoft.xxx, 1.0);
-                    if (missSoft <= 0.0001)
-                        return float4(_DebugReflectionOnly > 0.5 ? 0.0.xxx : src, 1.0);
-
-                    hitUv = closestUv;
-                    hitTravel = closestTravel;
-                    hit = true;
-                    usedSoftFallback = true;
-                    // Preserve reflection visibility while keeping soft boundary.
-                    softFallbackWeight = sqrt(missSoft);
+                        return float4(0.0, 0.0, 0.0, 1.0);
+                    return float4(_DebugReflectionOnly > 0.5 ? 0.0.xxx : src, 1.0);
                 }
 
                 if (debugMode == 4)
@@ -404,30 +537,50 @@ Shader "Hidden/RRR/SSRTrace"
                 if (debugMode == 5)
                     return float4(1.0, 1.0, 1.0, 1.0);
 
-                float rough = 1.0 - smoothness;
-                float filterRadius = _ResolveRadius * (0.5 + rough * 1.5);
-                float3 reflected = SampleReflectionFiltered(hitUv, filterRadius, rough);
-                float3 albedo = ReadAlbedo(uv);
-                float metallic = ReadMetallic(uv);
-                float3 f0 = lerp(0.04.xxx, albedo, metallic);
-                float nDotV = saturate(dot(normalVS, -viewDirVS));
-                float3 envBrdf = EnvBRDFApprox(f0, max(0.02, rough), nDotV);
-                float3 reflectedPbr = reflected * envBrdf;
-                float fresnelTerm = pow(saturate(1.0 - nDotV), 5.0);
-                float fresnelAtten = lerp(1.0, fresnelTerm, saturate(_FresnelFade));
+                float rough = saturate(1.0 - smoothness);
+                float3 reflected = SampleReflectionFiltered(hitUv, _ResolveRadius * rough * 1.8, rough);
+                float3 specTint = ReadSpecularTint(uv);
+                reflected *= specTint;
+
+                float nDotV = saturate(dot(normalVS, viewDirVS));
+                float fresnel = lerp(1.0, 0.06 + 0.94 * pow(1.0 - nDotV, 5.0), saturate(_FresnelFade));
 
                 float fadeStart = saturate(_FadeDistance / max(0.001, _MaxDistance)) * _MaxDistance;
                 float distRange = max(0.001, _MaxDistance - fadeStart);
                 float travelAtten = 1.0 - saturate((hitTravel - fadeStart) / distRange);
 
                 float border = min(min(hitUv.x, 1.0 - hitUv.x), min(hitUv.y, 1.0 - hitUv.y));
-                float edgeWidth = lerp(0.01, 0.14, saturate(_FresnelFade));
-                float edgeAtten = saturate(border / edgeWidth);
-                float alpha = saturate(edgeAtten * travelAtten * fresnelAtten * smoothMask);
-                if (usedSoftFallback)
-                    alpha *= softFallbackWeight;
+                float edge = saturate(border / lerp(0.02, 0.12, rough));
+                float confidence = 1.0 - saturate(abs(lastDepthDelta) / max(0.001, _Thickness * max(0.5, _MissFade)));
 
-                float3 outColor = _DebugReflectionOnly > 0.5 ? reflectedPbr * alpha : src + reflectedPbr * alpha;
+                // Reject only strongly backfacing hits; avoid aggressive cutouts on valid grazing reflections.
+                float hitRaw = SampleSceneDepth(hitUv);
+                if (!IsInvalidDepth(hitRaw))
+                {
+                    float3 hitVS = ViewPosFromDepth(hitUv, hitRaw);
+                    float3 hitViewDirVS = normalize(-hitVS);
+                    float3 hitNormalVS = ReadSurfaceNormalVS(hitUv, hitVS, hitViewDirVS);
+                    if (dot(hitNormalVS, -rayDirVS) <= -0.2)
+                        confidence = 0.0;
+                }
+
+                float alpha = smoothResponse;
+                alpha *= fresnel;
+                alpha *= edge;
+                alpha *= saturate(0.3 + 0.7 * travelAtten);
+                alpha *= saturate(0.35 + 0.65 * confidence);
+                alpha *= saturate(lerp(0.3, 1.0, reflectionResponse));
+                alpha *= saturate(lerp(0.6, 1.0, materialReflectivity));
+                alpha = saturate(alpha);
+                if (alpha < 0.005)
+                    return float4(_DebugReflectionOnly > 0.5 ? 0.0.xxx : src, 1.0);
+
+                float reflectionGain = lerp(1.0, 3.8, saturate(pow(reflectionResponse, 0.6)));
+                reflectionGain *= lerp(0.8, 1.4, specResponse);
+                reflectionGain *= lerp(0.9, 1.2, materialReflectivity);
+                float3 reflectedFinal = reflected * reflectionGain;
+
+                float3 outColor = _DebugReflectionOnly > 0.5 ? reflectedFinal * alpha : src + reflectedFinal * alpha;
                 return float4(outColor, 1.0);
             }
             ENDHLSL
