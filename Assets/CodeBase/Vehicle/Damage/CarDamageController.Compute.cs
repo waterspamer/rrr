@@ -29,6 +29,8 @@ public partial class CarDamageController
 
         Matrix4x4 worldToCar = transform.worldToLocalMatrix;
         Matrix4x4 carToWorld = transform.localToWorldMatrix;
+        bool hadPendingTargets = false;
+        bool dispatchedAny = false;
 
         for (int i = 0; i < deformTargets.Length; i++)
         {
@@ -36,7 +38,10 @@ public partial class CarDamageController
             if ((target.Filter == null && target.Skinned == null) || target.Mesh == null || target.OriginalVertices == null)
                 continue;
             if (target.ReadbackPending)
+            {
+                hadPendingTargets = true;
                 continue;
+            }
 
             EnsureComputeBuffers(ref target);
 
@@ -56,12 +61,18 @@ public partial class CarDamageController
 
             int groups = Mathf.CeilToInt(target.OriginalVertices.Length / 64.0f);
             damageDeformCompute.Dispatch(kernel, groups, 1, 1);
+            dispatchedAny = true;
 
             int index = i;
             target.ReadbackPending = true;
             deformTargets[index] = target;
             AsyncGPUReadback.Request(target.OutputBuffer, request => OnDeformReadback(request, index));
         }
+
+        if (hadPendingTargets)
+            computeRefreshQueued = true;
+        else if (dispatchedAny)
+            computeRefreshQueued = false;
     }
 
     private void ResetVertexColorsAlphaOne()
@@ -156,6 +167,27 @@ public partial class CarDamageController
         target.Mesh.RecalculateBounds();
         if (target.Skinned != null && target.Skinned.sharedMesh != target.Mesh)
             target.Skinned.sharedMesh = target.Mesh;
+
+        if (computeRefreshQueued && !HasPendingReadbacks())
+        {
+            // Catch up deformation that arrived while previous GPU readbacks were in flight.
+            computeRefreshQueued = false;
+            ApplyComputeDeformation();
+        }
+    }
+
+    private bool HasPendingReadbacks()
+    {
+        if (deformTargets == null)
+            return false;
+
+        for (int i = 0; i < deformTargets.Length; i++)
+        {
+            if (deformTargets[i].ReadbackPending)
+                return true;
+        }
+
+        return false;
     }
 
     private void EnsureComputeBuffers(ref MeshDeformTarget target)
@@ -187,6 +219,7 @@ public partial class CarDamageController
         }
 
         deformTargets = null;
+        computeRefreshQueued = false;
     }
 
     private static void ReleaseBuffers(ref MeshDeformTarget target)

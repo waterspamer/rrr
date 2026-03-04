@@ -84,6 +84,7 @@ public partial class CarDamageController : MonoBehaviour
     private static Mesh voxelMesh;
     private MeshDeformTarget[] deformTargets;
     private bool applyComputeOnInit;
+    private bool computeRefreshQueued;
     private const int VelocitySampleCount = 8;
     private readonly Vector3[] velocitySamples = new Vector3[VelocitySampleCount];
     private int velocitySampleIndex;
