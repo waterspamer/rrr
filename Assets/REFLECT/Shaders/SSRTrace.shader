@@ -43,6 +43,7 @@
             float _SurfaceBias;
             float _FadeDistance;
             float _FresnelFade;
+            float _ReflectionIntensity;
             float _ResolveRadius;
             float _DebugReflectionOnly;
             float _DebugMode;
@@ -190,6 +191,13 @@
                 return (bayer[idx] + 0.5) / 16.0;
             }
 
+            float Hash12(float2 p)
+            {
+                float3 p3 = frac(float3(p.xyx) * 0.1031);
+                p3 += dot(p3, p3.yzx + 33.33);
+                return frac((p3.x + p3.y) * p3.z);
+            }
+
             bool LinearDepthAtUv(float2 uv, out float linearDepth)
             {
                 float raw = SampleSceneDepth(uv);
@@ -276,8 +284,9 @@
                 occlusion = saturate(g1.a);
                 smoothnessG = saturate(g2.a);
 
-                // Если в кадре есть forward-only объекты поверх deferred, их smoothness может быть только в normals texture.
-                smoothness = max(smoothnessG, smoothnessN);
+                // Deferred path: authoritative smoothness is from GBuffer2.a.
+                // Normals alpha may contain unrelated data depending on path/feature setup.
+                smoothness = smoothnessG;
 
                 bool isSpecularWorkflow = (materialFlags & kMaterialFlagSpecularSetup) != 0u;
 
@@ -343,6 +352,11 @@
 
                 float3 accum = 0.0;
                 float wsum = 0.0;
+                float2 pix = hitUv * _ScreenSize.xy;
+                float noise = Hash12(pix + _Time.yy * 60.0);
+                float angle = noise * 6.2831853;
+                float s = sin(angle);
+                float c = cos(angle);
 
                 float2 offsets[9] =
                 {
@@ -362,8 +376,10 @@
                 UNITY_UNROLL
                 for (int i = 0; i < 9; i++)
                 {
-                    float2 suv = clamp(hitUv + offsets[i] * o, 0.001, 0.999);
-                    float3 c = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, suv, lod).rgb;
+                    float2 r = offsets[i];
+                    float2 rotated = float2(r.x * c - r.y * s, r.x * s + r.y * c);
+                    float2 suv = clamp(hitUv + rotated * o, 0.001, 0.999);
+                    float3 sampleColor = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, suv, lod).rgb;
                     float w = weights[i];
 
                     // depth-aware weighting чтобы не смешивать разные поверхности
@@ -379,7 +395,7 @@
                         }
                     }
 
-                    accum += c * w;
+                    accum += sampleColor * w;
                     wsum += w;
                 }
 
@@ -471,7 +487,8 @@
 
                 float quality = saturate(_TraceQuality);
                 float stepBase = _RayStep * lerp(1.7, 0.85, quality);
-                float travel = stepBase * (0.35 + Bayer4x4(uv) * 0.3);
+                float pixelNoise = Hash12(uv * _ScreenSize.xy + _Time.yy * 60.0);
+                float travel = stepBase * (0.2 + pixelNoise * 0.8);
                 float3 startPosVS = viewPos + normalVS * _SurfaceBias;
 
                 float3 prevPosVS = startPosVS;
@@ -486,6 +503,8 @@
                 for (int i = 0; i < (int)_MaxSteps; i++)
                 {
                     float step = stepBase * (1.0 + i * 0.02);
+                    float seq = frac(pixelNoise + (float)i * 0.61803398875);
+                    step *= lerp(0.85, 1.15, seq);
                     if (_UseHierarchicalTraversal > 0.5 && _HiZMipCount > 1.0)
                     {
                         float maxMip = max(0.0, _HiZMipCount - 1.0);
@@ -611,6 +630,7 @@
                 if (debugMode == 5) return float4(1.0, 1.0, 1.0, 1.0);
 
                 float perceptualRoughness = saturate(1.0 - smoothness);
+                float roughness = max(perceptualRoughness * perceptualRoughness, 1e-4);
                 float3 ssrRadiance = SampleReflectionFiltered(hitUv, _ResolveRadius * perceptualRoughness * 1.8, perceptualRoughness);
 
                 float NoV = saturate(dot(normalVS, viewDirVS));
@@ -638,10 +658,20 @@
                         confidence = 0.0;
                 }
 
-                // Alpha теперь — только “валидность SSR” (не “материал”).
+                // Base SSR validity (screen-space confidence).
                 float alpha = edge;
                 alpha *= saturate(0.3 + 0.7 * travelAtten);
                 alpha *= saturate(0.35 + 0.65 * confidence);
+
+                // Material response weight (physically-motivated):
+                // stronger for high F0, grazing angles and smoother surfaces.
+                float F0Max = Max3(F0);
+                float fresnel = Pow4(1.0 - NoV);
+                float fresnelWeight = saturate(lerp(F0Max, 1.0, fresnel));
+                float smoothWeight = saturate(1.0 - roughness);
+                float materialWeight = saturate(fresnelWeight * lerp(0.2, 1.0, smoothWeight));
+
+                alpha *= materialWeight;
                 alpha = saturate(alpha);
 
                 if (debugMode == 27) return float4(envSpec, 1.0);
@@ -653,9 +683,14 @@
                 if (alpha < 0.005)
                     return float4(_DebugReflectionOnly > 0.5 ? 0.0.xxx : src, 1.0);
 
+                // Energy-aware composite:
+                // replace an approximation of existing indirect spec in src with SSR, not pure additive boost.
+                float3 approxIndirectSpecInSrc = src * (fresnelWeight * occlusion * lerp(0.3, 0.8, smoothWeight));
+                float3 ssrDelta = ssrSpec - approxIndirectSpecInSrc;
+
                 float3 outColor = (_DebugReflectionOnly > 0.5)
-                    ? (ssrSpec * alpha)
-                    : (src + ssrSpec * alpha);
+                    ? (ssrSpec * alpha * _ReflectionIntensity)
+                    : max(0.0, src + ssrDelta * alpha * _ReflectionIntensity);
 
                 return float4(outColor, 1.0);
             }

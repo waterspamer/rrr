@@ -29,7 +29,7 @@ Material:
   m_LightmapFlags: 1
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 2033
+  m_CustomRenderQueue: 2027
   stringTagMap: {}
   disabledShaderPasses:
   - MOTIONVECTORS
@@ -137,6 +137,8 @@ Material:
     - _ClearCoat: 0
     - _ClearCoatMask: 0
     - _ClearCoatSmoothness: 0
+    - _CoatMask: 1
+    - _CoatSmoothness: 0.95
     - _Color: 0
     - _Cull: 2
     - _Cutoff: 0.5
@@ -144,6 +146,7 @@ Material:
     - _DamageDirection: -1
     - _DamageSinFrequency: 10
     - _DamageSinStrength: 0.25
+    - _DamagedCoatSmoothness: 0.1
     - _DeformAmplitude: 0.01
     - _DeformFrequency: 231.2
     - _DetailAlbedoMapScale: 1
@@ -165,12 +168,12 @@ Material:
     - _Metallic: 0
     - _OcclusionStrength: 1
     - _Parallax: 0.005
-    - _PearlescentFactor: 1
+    - _PearlescentFactor: 1.92
     - _PearlescentIntensity: 3.07
     - _PearlescentPower: 0.548
     - _PearlescentScale: 3.55
     - _QueueControl: 0
-    - _QueueOffset: 33
+    - _QueueOffset: 27
     - _ReceiveShadows: 1
     - _ReflAmount: 0.5
     - _ReflPower: 2
@@ -198,11 +201,11 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _FlakeColor: {r: 0.9150943, g: 0.6517889, b: 0.6517889, a: 1}
     - _FresnelColor: {r: 1, g: 1, b: 1, a: 1}
-    - _MainColor: {r: 0.8139398, g: 0, b: 0.8392157, a: 1}
+    - _MainColor: {r: 1, g: 0.2627451, b: 0, a: 1}
     - _MainTint: {r: 1, g: 1, b: 1, a: 1}
-    - _Pearlescent: {r: 0, g: 0.089123204, b: 0.103773594, a: 1}
+    - _Pearlescent: {r: 0.31132078, g: 0, b: 0.019331368, a: 1}
     - _PearlescentColor: {r: 0.6132076, g: 0, b: 0.036659084, a: 1}
-    - _ScratchesSmoothstep: {r: 0.3, g: 0.7, b: 0, a: 0}
+    - _ScratchesSmoothstep: {r: 0.3, g: 0.39, b: 0, a: 0}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _SpecularColor: {r: 1, g: 1, b: 1, a: 1}
     - _TexResolution: {r: 8, g: 16, b: 0, a: 0}

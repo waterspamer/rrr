@@ -86,6 +86,7 @@ public class ReflectRenderPass : ScriptableRendererFeature
         private static readonly int SurfaceBiasId = Shader.PropertyToID("_SurfaceBias");
         private static readonly int FadeDistanceId = Shader.PropertyToID("_FadeDistance");
         private static readonly int FresnelFadeId = Shader.PropertyToID("_FresnelFade");
+        private static readonly int ReflectionIntensityId = Shader.PropertyToID("_ReflectionIntensity");
         private static readonly int ResolveRadiusId = Shader.PropertyToID("_ResolveRadius");
         private static readonly int DebugReflectionOnlyId = Shader.PropertyToID("_DebugReflectionOnly");
         private static readonly int DebugModeId = Shader.PropertyToID("_DebugMode");
@@ -139,6 +140,7 @@ public class ReflectRenderPass : ScriptableRendererFeature
             traceMaterial.SetFloat(SurfaceBiasId, Mathf.Max(0.002f, thickness * 0.125f));
             traceMaterial.SetFloat(FadeDistanceId, settings.fadeDistance.value);
             traceMaterial.SetFloat(FresnelFadeId, settings.fresnelFade.value);
+            traceMaterial.SetFloat(ReflectionIntensityId, settings.reflectionIntensity.value);
             traceMaterial.SetFloat(ResolveRadiusId, resolveRadius);
             traceMaterial.SetFloat(DebugReflectionOnlyId, settings.debugReflectionOnly.value ? 1.0f : 0.0f);
             traceMaterial.SetFloat(DebugModeId, settings.debugMode.value);

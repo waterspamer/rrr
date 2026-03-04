@@ -28,8 +28,6 @@ public abstract partial class CarControllerBase
             return;
 
         config.Validate();
-        wheelRadius = config.wheelRadius;
-        wheelWidth = config.wheelWidth;
         suspensionDistance = config.suspensionDistance;
         suspensionFrequency = config.suspensionFrequency;
         suspensionDamping = config.suspensionDamping;
@@ -81,6 +79,8 @@ public abstract partial class CarControllerBase
         sidewaysExtremumValue = settings.sidewaysExtremumValue;
         sidewaysAsymptoteSlip = settings.sidewaysAsymptoteSlip;
         sidewaysAsymptoteValue = settings.sidewaysAsymptoteValue;
+        wheelRadius = settings.wheelRadius;
+        wheelWidth = settings.wheelWidth;
         nitroEnabled = settings.nitroEnabled;
         nitroStart = settings.nitroStart;
         nitroRegenPerSecond = settings.nitroRegenPerSecond;

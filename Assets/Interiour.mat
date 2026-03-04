@@ -157,7 +157,7 @@ Material:
     - _ReflAmount: 0.5
     - _ReflPower: 2
     - _ReflectionIntensity: 2
-    - _Smoothness: 0.626
+    - _Smoothness: 0.163
     - _SmoothnessTextureChannel: 0
     - _SpecPower: 3
     - _SpecularHighlights: 1

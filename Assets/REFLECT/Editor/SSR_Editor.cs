@@ -19,6 +19,7 @@ namespace UnityEditor.Rendering.Universal
         SerializedDataParameter missFade;
         SerializedDataParameter fadeDistance;
         SerializedDataParameter fresnelFade;
+        SerializedDataParameter reflectionIntensity;
         SerializedDataParameter refinementSamples;
         SerializedDataParameter debugReflectionOnly;
         SerializedDataParameter debugMode;
@@ -41,6 +42,7 @@ namespace UnityEditor.Rendering.Universal
             missFade = Unpack(o.Find(x => x.missFade));
             fadeDistance = Unpack(o.Find(x => x.fadeDistance));
             fresnelFade = Unpack(o.Find(x => x.fresnelFade));
+            reflectionIntensity = Unpack(o.Find(x => x.reflectionIntensity));
             refinementSamples = Unpack(o.Find(x => x.refinementSamples));
             debugReflectionOnly = Unpack(o.Find(x => x.debugReflectionOnly));
             debugMode = Unpack(o.Find(x => x.debugMode));
@@ -62,6 +64,7 @@ namespace UnityEditor.Rendering.Universal
             PropertyField(missFade, new GUIContent("Miss Fade Softness"));
             PropertyField(fadeDistance, new GUIContent("Fade Distance"));
             PropertyField(fresnelFade, new GUIContent("Fresnel Fade"));
+            PropertyField(reflectionIntensity, new GUIContent("SSR Intensity"));
             PropertyField(refinementSamples, new GUIContent("Refinement / Samples"));
             PropertyField(debugReflectionOnly);
             PropertyField(debugMode);

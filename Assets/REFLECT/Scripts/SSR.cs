@@ -17,6 +17,7 @@ namespace UnityEngine.Rendering.Universal
         public ClampedFloatParameter missFade = new ClampedFloatParameter(0.75f, 0.0f, 6.0f);
         public ClampedFloatParameter fadeDistance = new ClampedFloatParameter(50.0f, 0.0f, 400.0f);
         public ClampedFloatParameter fresnelFade = new ClampedFloatParameter(0.8f, 0.0f, 1.0f);
+        public ClampedFloatParameter reflectionIntensity = new ClampedFloatParameter(1.0f, 0.0f, 4.0f);
         public ClampedIntParameter refinementSamples = new ClampedIntParameter(5, 0, 12);
         public BoolParameter debugReflectionOnly = new BoolParameter(false);
         public ClampedIntParameter debugMode = new ClampedIntParameter(0, 0, 40);

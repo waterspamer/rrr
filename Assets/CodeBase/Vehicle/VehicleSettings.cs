@@ -43,6 +43,10 @@ public class VehicleSettings : ScriptableObject
     [Range(0.1f, 5.0f)] public float sidewaysAsymptoteSlip = 2.0f;
     [Range(0.1f, 5.0f)] public float sidewaysAsymptoteValue = 0.5f;
 
+    [Header("Wheels")]
+    [Range(0.05f, 2.0f)] public float wheelRadius = 0.35f;
+    [Range(0.05f, 1.0f)] public float wheelWidth = 0.2f;
+
     [Header("Chassis")]
     [Range(600.0f, 2500.0f)] public float mass = 1200.0f;
     [Range(0.0f, 50.0f)] public float downforce = 0.2f;
@@ -75,6 +79,8 @@ public class VehicleSettings : ScriptableObject
         forwardFriction = Mathf.Clamp(forwardFriction, 0.1f, 5.0f);
         sidewaysFriction = Mathf.Clamp(sidewaysFriction, 0.1f, 5.0f);
         handbrakeFrictionMultiplier = Mathf.Clamp(handbrakeFrictionMultiplier, 0.05f, 1.0f);
+        wheelRadius = Mathf.Clamp(wheelRadius, 0.05f, 2.0f);
+        wheelWidth = Mathf.Clamp(wheelWidth, 0.05f, 1.0f);
         if (lateralStability <= 0.0f)
             lateralStability = 4.0f;
         if (yawStability <= 0.0f)

@@ -19,7 +19,15 @@ public partial class CarDamageController
         float normalImpact = GetImpactNormalFactor(collision);
         float alignment = Mathf.Pow(normalImpact, Mathf.Max(0.1f, impactAlignmentPower));
         float glancingScale = Mathf.Lerp(Mathf.Clamp01(glancingDamageScale), 1.0f, alignment);
-        float baseAmount = Mathf.Clamp(collision.impulse.magnitude * impulseToColor, 0.0f, maxColorStep);
+        float effectiveImpulse = collision.impulse.magnitude;
+        if (effectiveImpulse <= 0.001f)
+        {
+            Rigidbody rb = GetComponent<Rigidbody>();
+            float bodyMass = rb != null ? rb.mass : 1.0f;
+            effectiveImpulse = impactSpeedMps * bodyMass * impulseFromSpeedFactor;
+        }
+
+        float baseAmount = Mathf.Clamp(effectiveImpulse * impulseToColor, 0.0f, maxColorStep);
         float amount = baseAmount * speedScale * glancingScale;
         if (amount <= 0.0001f)
             return;
@@ -28,9 +36,9 @@ public partial class CarDamageController
             damageManager.SpawnCollisionEffect(collision);
         followCarCamera?.PlayCollisionShake(collision.impulse.magnitude);
 
-        Debug.Log($"CarDamageController hit {collision.collider.name} impulse={collision.impulse.magnitude:0.000} impactSpeed={impactSpeedKmh:0.0}km/h normalImpact={normalImpact:0.00} amount={amount:0.000}", this);
+        Debug.Log($"CarDamageController hit {collision.collider.name} impulse={collision.impulse.magnitude:0.000} effectiveImpulse={effectiveImpulse:0.000} impactSpeed={impactSpeedKmh:0.0}km/h normalImpact={normalImpact:0.00} amount={amount:0.000}", this);
 
-        int baseRadiusCells = Mathf.Clamp(Mathf.CeilToInt(collision.impulse.magnitude * impulseToRadius), 0, maxRadiusCells);
+        int baseRadiusCells = Mathf.Clamp(Mathf.CeilToInt(effectiveImpulse * impulseToRadius), 0, maxRadiusCells);
         int radiusCells = Mathf.Clamp(
             Mathf.RoundToInt(baseRadiusCells * (1.0f + curveScale * speedRadiusBoost) * glancingScale),
             0,

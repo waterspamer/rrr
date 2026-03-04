@@ -17,6 +17,8 @@ public partial class CarDamageController
         textureHeight = settings.textureHeight;
 
         obstacleTag = settings.obstacleTag;
+        obstacleTagIsValid = string.IsNullOrWhiteSpace(obstacleTag) || IsValidTag(obstacleTag);
+        obstacleTagWarningShown = false;
         impulseToColor = settings.impulseToColor;
         maxColorStep = settings.maxColorStep;
         impulseToRadius = settings.impulseToRadius;

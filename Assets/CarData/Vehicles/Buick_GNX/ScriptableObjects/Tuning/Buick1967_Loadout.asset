@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e328cade975aa44cb5551224731483b, type: 3}
+  m_Name: Buick1967_Loadout
+  m_EditorClassIdentifier: 
+  displayName: Buick 1967
+  playerCarConfig: {fileID: 11400000, guid: ba003ef284eedb94e8e381ffce8518c7, type: 2}
+  handlingConfig: {fileID: 11400000, guid: ad471a6cf7237da43a6b9d6ba295603b, type: 2}
+  engineConfigs:
+  - {fileID: 11400000, guid: 149d29c5e42d9e245b335cb1670b2d1e, type: 2}
+  - {fileID: 11400000, guid: 30d1cbad2ecaefc4faa2c7a301d15f6f, type: 2}
+  - {fileID: 11400000, guid: fe9434f5a7c79574e9fd807454f70273, type: 2}
+  suspensionConfigs:
+  - {fileID: 11400000, guid: 3f72f17352309bf419a2e34754296b64, type: 2}
+  - {fileID: 11400000, guid: a3642dc2f78624b48b9c69130c14c933, type: 2}
+  - {fileID: 11400000, guid: 3efeb7c9a5f181e4f849a26e8c53788c, type: 2}
+  paintOptions:
+  - {fileID: 11400000, guid: 4b5f1f7c1b5f4b6ea2f7c7f4a0b31f25, type: 2}
+  - {fileID: 11400000, guid: 5b7e9a9d74b6438b8b91f3a2a9b5a3c2, type: 2}
+  - {fileID: 11400000, guid: 6b7c8d9e0f1a4b2c9d8e7f6a5b4c3d2e, type: 2}
+  - {fileID: 11400000, guid: 3a7c7c3fe8ad44d69024bb5a0cf6a2ef, type: 2}
+  - {fileID: 11400000, guid: 5a9c2d3e4f5b4a1c9d2e3f4a5b6c7d8e, type: 2}
+  - {fileID: 11400000, guid: c1a29d7e6b3f4f27a9d14cc8e5b1026a, type: 2}
+  - {fileID: 11400000, guid: d37f91b6a4ce4a48b51dd2f7c9a8301e, type: 2}
+  - {fileID: 11400000, guid: e4b20c9f7d9a4ef1b2746a1cd8e35f90, type: 2}
+  - {fileID: 11400000, guid: f17c3a8d2e6b49c4a5d0e7b1c9f23468, type: 2}
+  - {fileID: 11400000, guid: ab9d3e1f6c7245b89a0e3d7f2b1c4a65, type: 2}
+  defaultEngineIndex: 1
+  defaultSuspensionIndex: 1
+  defaultPaintIndex: 0

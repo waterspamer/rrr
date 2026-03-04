@@ -19,6 +19,7 @@ public partial class CarDamageController : MonoBehaviour
     [HideInInspector, SerializeField, Min(0.0001f)] private float impulseToColor = 0.0025f;
     [HideInInspector, SerializeField, Range(0.0f, 1.0f)] private float maxColorStep = 0.35f;
     [HideInInspector, SerializeField, Min(0.0f)] private float impulseToRadius = 0.02f;
+    [HideInInspector, SerializeField, Min(0.0f)] private float impulseFromSpeedFactor = 0.25f;
     [HideInInspector, SerializeField, Min(0)] private int maxRadiusCells = 3;
     [HideInInspector, SerializeField, Min(0.1f)] private float minSpeedForDamageKmh = 5.0f;
     [HideInInspector, SerializeField, Min(1.0f)] private float maxSpeedForDamageKmh = 80.0f;
@@ -87,6 +88,8 @@ public partial class CarDamageController : MonoBehaviour
     private readonly Vector3[] velocitySamples = new Vector3[VelocitySampleCount];
     private int velocitySampleIndex;
     private int velocitySampleFilled;
+    private bool obstacleTagWarningShown;
+    private bool obstacleTagIsValid = true;
 
     private struct MeshDeformTarget
     {
@@ -168,11 +171,19 @@ public partial class CarDamageController : MonoBehaviour
         ApplyCollisionDamage(collision);
     }
 
+    private void Start()
+    {
+        // Ensure damage system is initialized even when external setup did not call InitializeFrom*.
+        if (!isInitialized)
+            InitializeFromColliders(GetComponentsInChildren<Collider>(true));
+    }
+
     private void Awake()
     {
         applyComputeOnInit = true;
         velocitySampleIndex = 0;
         velocitySampleFilled = 0;
+        obstacleTagIsValid = string.IsNullOrWhiteSpace(obstacleTag) || IsValidTag(obstacleTag);
         if (damageManager == null)
             damageManager = GetComponent<DamageManager>();
         if (followCarCamera == null)
@@ -278,7 +289,53 @@ public partial class CarDamageController : MonoBehaviour
     private bool IsObstacle(Collision collision)
     {
         Collider col = collision.collider;
-        return col != null && col.CompareTag(obstacleTag);
+        if (col == null)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(obstacleTag))
+            return true;
+
+        if (!obstacleTagIsValid)
+        {
+            if (!obstacleTagWarningShown)
+            {
+                Debug.LogWarning($"CarDamageController: obstacleTag '{obstacleTag}' is not defined in Tags. Damage collisions will not be filtered by tag.", this);
+                obstacleTagWarningShown = true;
+            }
+            return true;
+        }
+
+        if (col.CompareTag(obstacleTag))
+            return true;
+
+        Rigidbody otherBody = col.attachedRigidbody;
+        if (otherBody != null && otherBody.CompareTag(obstacleTag))
+            return true;
+
+        Transform t = col.transform;
+        while (t != null)
+        {
+            if (t.CompareTag(obstacleTag))
+                return true;
+            t = t.parent;
+        }
+
+        return false;
+    }
+
+    private static bool IsValidTag(string tagName)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(tagName))
+                return false;
+            _ = GameObject.FindWithTag(tagName);
+            return true;
+        }
+        catch (UnityException)
+        {
+            return false;
+        }
     }
 
     private void CreateTexture()

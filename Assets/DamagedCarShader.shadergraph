@@ -2599,7 +2599,7 @@
     "m_ObjectId": "b8cf3fab9e4c48b1a1d706728a0fa3b8",
     "m_WorkflowMode": 1,
     "m_NormalDropOffSpace": 0,
-    "m_ClearCoat": false,
+    "m_ClearCoat": true,
     "m_BlendModePreserveSpecular": true
 }
 
