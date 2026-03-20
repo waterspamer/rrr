@@ -1,0 +1,54 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42f1ee46ed9aeab4688d0c7d502b1bf2, type: 3}
+  m_Name: DefaultCarMaterialRemapProfile
+  m_EditorClassIdentifier: Assembly-CSharp::CarMaterialRemapProfile
+  fallbackMaterial: {fileID: 2100000, guid: 4b1a4620d3a754e478cd6f0784e5d550, type: 2}
+  rules:
+  - matchToken: CarPaint
+    templateMaterial: {fileID: 2100000, guid: b9aca602768855941aea21569f64d410, type: 2}
+  - matchToken: Glass
+    templateMaterial: {fileID: 2100000, guid: 1a81802f48c51ea47bc96859f274ab35, type: 2}
+  - matchToken: PlasticSmooth
+    templateMaterial: {fileID: 2100000, guid: cd71eddd5a03bb24eb5d5b9f6d08a1f1, type: 2}
+  - matchToken: RubberSmooth
+    templateMaterial: {fileID: 2100000, guid: cd71eddd5a03bb24eb5d5b9f6d08a1f1, type: 2}
+  - matchToken: PlasticRough
+    templateMaterial: {fileID: 2100000, guid: 878cbd59be1d50f40bc139c36124c196, type: 2}
+  - matchToken: RubberRough
+    templateMaterial: {fileID: 2100000, guid: 878cbd59be1d50f40bc139c36124c196, type: 2}
+  - matchToken: Chassis
+    templateMaterial: {fileID: 2100000, guid: 4b1a4620d3a754e478cd6f0784e5d550, type: 2}
+  - matchToken: Interior
+    templateMaterial: {fileID: 2100000, guid: 4b1a4620d3a754e478cd6f0784e5d550, type: 2}
+  - matchToken: Engine
+    templateMaterial: {fileID: 2100000, guid: 4b1a4620d3a754e478cd6f0784e5d550, type: 2}
+  - matchToken: ChromeSmooth
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: NickelSmooth
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: NickelRough
+    templateMaterial: {fileID: 2100000, guid: 4b1a4620d3a754e478cd6f0784e5d550, type: 2}
+  - matchToken: Badge
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: Rim
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: Grille
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: LicensePlate
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: LightBucket
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: GenericDetail
+    templateMaterial: {fileID: 2100000, guid: ee1f67fce5e5be4418ed167b531684d6, type: 2}
+  - matchToken: PaintSolidBlack
+    templateMaterial: {fileID: 2100000, guid: cd71eddd5a03bb24eb5d5b9f6d08a1f1, type: 2}

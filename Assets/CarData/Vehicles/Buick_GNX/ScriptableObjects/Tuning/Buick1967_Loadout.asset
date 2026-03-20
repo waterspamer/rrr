@@ -15,6 +15,9 @@ MonoBehaviour:
   displayName: Buick 1967
   playerCarConfig: {fileID: 11400000, guid: ba003ef284eedb94e8e381ffce8518c7, type: 2}
   handlingConfig: {fileID: 11400000, guid: ad471a6cf7237da43a6b9d6ba295603b, type: 2}
+  bodySets:
+  - {fileID: 11400000, guid: 73043f16baa04d11ba58549db6bb41da, type: 2}
+  - {fileID: 11400000, guid: bf06bc95f0b4431daee8e45efa3ac4e7, type: 2}
   engineConfigs:
   - {fileID: 11400000, guid: 149d29c5e42d9e245b335cb1670b2d1e, type: 2}
   - {fileID: 11400000, guid: 30d1cbad2ecaefc4faa2c7a301d15f6f, type: 2}
@@ -34,6 +37,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e4b20c9f7d9a4ef1b2746a1cd8e35f90, type: 2}
   - {fileID: 11400000, guid: f17c3a8d2e6b49c4a5d0e7b1c9f23468, type: 2}
   - {fileID: 11400000, guid: ab9d3e1f6c7245b89a0e3d7f2b1c4a65, type: 2}
+  defaultBodySetIndex: 0
   defaultEngineIndex: 1
   defaultSuspensionIndex: 1
   defaultPaintIndex: 0

@@ -1,0 +1,84 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <ui:VisualElement name="garage-root" class="garage-root">
+        <ui:VisualElement class="garage-header">
+            <ui:VisualElement class="garage-branding">
+                <ui:Label text="GARAGE" class="garage-kicker" />
+                <ui:Label text="RUSSIAN ROAD RAGE" class="garage-brand-title" />
+                <ui:Label name="hero-subtitle" text="Street setup, styling and launch flow." class="garage-brand-subtitle" />
+            </ui:VisualElement>
+            <ui:VisualElement name="header-breadcrumbs" class="garage-breadcrumbs" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="garage-content">
+            <ui:VisualElement name="left-rail" class="garage-panel garage-left-rail">
+                <ui:VisualElement class="garage-identity">
+                    <ui:Label name="car-name" text="No Loadout" class="garage-car-name" />
+                    <ui:Label name="car-subtitle" text="Assign at least one car loadout to the garage." class="garage-car-subtitle" />
+                </ui:VisualElement>
+
+                <ui:VisualElement class="garage-divider" />
+
+                <ui:Label text="MY RIDES" class="garage-section-kicker" />
+                <ui:ScrollView name="car-rail" class="garage-scroll garage-car-rail" mode="Vertical" />
+
+                <ui:VisualElement class="garage-divider" />
+
+                <ui:Label text="SNAPSHOT" class="garage-section-kicker" />
+                <ui:VisualElement name="stat-rail" class="garage-stat-rail">
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Horsepower" class="garage-stat-label" />
+                        <ui:Label name="stat-horsepower" text="--" class="garage-stat-value" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Final drive" class="garage-stat-label" />
+                        <ui:Label name="stat-final-drive" text="--" class="garage-stat-value" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Ride height" class="garage-stat-label" />
+                        <ui:Label name="stat-ride-height" text="--" class="garage-stat-value" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Paint" class="garage-stat-label" />
+                        <ui:Label name="stat-paint" text="--" class="garage-stat-value" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Body" class="garage-stat-label" />
+                        <ui:Label name="stat-body" text="--" class="garage-stat-value" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="garage-stat-row">
+                        <ui:Label text="Focus" class="garage-stat-label" />
+                        <ui:Label name="stat-category" text="Home" class="garage-stat-value" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+
+                <ui:Label name="debug-status" text="" class="garage-debug-status" />
+            </ui:VisualElement>
+
+            <ui:VisualElement name="center-stage" class="garage-center-stage">
+                <ui:VisualElement class="garage-center-copy">
+                    <ui:Label name="hero-title" text="Night Garage" class="garage-hero-title" />
+                    <ui:Label text="HEAT GARAGE FLOW" class="garage-center-kicker" />
+                    <ui:Label text="Mouse drag rotates the preview car. Navigate from high-level sections into deeper part variants." class="garage-center-helper" />
+                </ui:VisualElement>
+                <ui:VisualElement class="garage-pulse-strip">
+                    <ui:VisualElement class="garage-pulse-bar garage-pulse-bar--lg garage-pulse-bar--hot" />
+                    <ui:VisualElement class="garage-pulse-bar garage-pulse-bar--sm garage-pulse-bar--warm" />
+                    <ui:VisualElement class="garage-pulse-bar garage-pulse-bar--xl garage-pulse-bar--cool" />
+                    <ui:VisualElement class="garage-pulse-bar garage-pulse-bar--md garage-pulse-bar--hot" />
+                    <ui:VisualElement class="garage-pulse-bar garage-pulse-bar--lg garage-pulse-bar--warm" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement name="right-drawer" class="garage-panel garage-right-drawer">
+            <ui:Label name="section-title" text="Main Menu" class="garage-drawer-title" />
+            <ui:Label name="section-subtitle" text="A NFS: Heat-inspired garage hub built on the current loadout system." class="garage-drawer-subtitle" />
+            <ui:VisualElement class="garage-divider" />
+            <ui:VisualElement name="right-drawer-content" class="garage-drawer-content" />
+        </ui:VisualElement>
+
+        <ui:VisualElement name="footer-bar" class="garage-footer">
+            <ui:Label name="footer-hint" text="Select a section on the right. LMB rotates the preview car." class="garage-footer-hint" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

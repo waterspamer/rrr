@@ -124,6 +124,21 @@ public partial class CarDamageController : MonoBehaviour
             bodyRoot.GetComponentsInChildren<Renderer>(true));
     }
 
+    public void ReinitializeFromBody(GameObject bodyRoot)
+    {
+        ResetInitializationState();
+
+        if (bodyRoot == null)
+        {
+            InitializeFromColliders(GetComponentsInChildren<Collider>(true));
+            return;
+        }
+
+        InitializeFromSources(
+            bodyRoot.GetComponentsInChildren<Collider>(true),
+            bodyRoot.GetComponentsInChildren<Renderer>(true));
+    }
+
     public void InitializeFromColliders(Collider[] colliders)
     {
         if (isInitialized)
@@ -141,6 +156,39 @@ public partial class CarDamageController : MonoBehaviour
         if (applyComputeOnInit && deformMeshWithCompute)
             ApplyComputeDeformation();
         applyComputeOnInit = false;
+    }
+
+    private void ResetInitializationState()
+    {
+        ReleaseDeformTargets();
+        hasBounds = false;
+        isInitialized = false;
+        heightMap = null;
+        computeRefreshQueued = false;
+
+        if (cpuTexture != null)
+        {
+            DestroyRuntimeObject(cpuTexture);
+            cpuTexture = null;
+        }
+
+        if (runtimeTexture != null && damageTexture == null)
+        {
+            runtimeTexture.Release();
+            DestroyRuntimeObject(runtimeTexture);
+            runtimeTexture = null;
+        }
+    }
+
+    private static void DestroyRuntimeObject(Object obj)
+    {
+        if (obj == null)
+            return;
+
+        if (Application.isPlaying)
+            Destroy(obj);
+        else
+            DestroyImmediate(obj);
     }
 
     public void RepairDamage()

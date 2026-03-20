@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 [DefaultExecutionOrder(-500)]
 [DisallowMultipleComponent]
@@ -10,9 +11,11 @@ public class PlayerCar : MonoBehaviour
     [SerializeField] private VehicleSettings handlingConfig;
     [SerializeField] private EngineGearboxConfig engineGearboxConfig;
     [SerializeField] private SuspensionConfig suspensionConfig;
+    [SerializeField] private BodySetConfig bodySetConfig;
     [SerializeField] private CarControllerBase controller;
     [SerializeField] private RiggedCarController riggedController;
     [SerializeField] private CarDamageController damageController;
+    [SerializeField] private List<CarCustomizationSelection> customizationSelections = new List<CarCustomizationSelection>();
     private bool missingControllerWarningShown;
     private Color currentPaint = Color.white;
     private bool hasPaintOverride;
@@ -30,6 +33,7 @@ public class PlayerCar : MonoBehaviour
             engineGearboxConfig = engineConfig;
         if (suspension != null)
             suspensionConfig = suspension;
+        bodySetConfig = null;
     }
 
     private void Reset()
@@ -84,18 +88,22 @@ public class PlayerCar : MonoBehaviour
             controller.SetSuspensionSettings(suspensionConfig);
         }
 
+        PlayerCarVisualSettings resolvedVisual = ResolveVisualSettings();
+
         if (riggedController != null)
         {
-            if (config != null)
-                riggedController.ApplyVisualSettings(config.Visual);
+            if (resolvedVisual != null)
+                riggedController.ApplyVisualSettings(resolvedVisual);
+            riggedController.ApplyBodySetConfig(bodySetConfig);
+            riggedController.ApplyCustomizationSelections(customizationSelections);
             riggedController.ApplySuspensionVisualSettings(suspensionConfig);
         }
 
         if (damageController != null && config != null)
             damageController.ApplyDamageSettings(config.Damage);
 
-        if (config != null && config.Visual != null && config.Visual.useDefaultPaint && !hasPaintOverride)
-            SetPaint(config.Visual.defaultPaint);
+        if (resolvedVisual != null && resolvedVisual.useDefaultPaint && !hasPaintOverride)
+            SetPaint(resolvedVisual.defaultPaint);
         else
             ApplyPaintDeferred();
     }
@@ -107,12 +115,22 @@ public class PlayerCar : MonoBehaviour
         ApplyConfig();
     }
 
-    public void OverrideLoadout(PlayerCarConfig carConfig, VehicleSettings handling, EngineGearboxConfig engineConfig, SuspensionConfig suspension)
+    public void OverrideLoadout(
+        PlayerCarConfig carConfig,
+        VehicleSettings handling,
+        BodySetConfig bodySet,
+        EngineGearboxConfig engineConfig,
+        SuspensionConfig suspension,
+        IReadOnlyList<CarCustomizationSelection> customizations = null)
     {
         if (carConfig != null)
             config = carConfig;
         if (handling != null)
             handlingConfig = handling;
+        bodySetConfig = bodySet;
+        customizationSelections = customizations != null
+            ? new List<CarCustomizationSelection>(customizations)
+            : new List<CarCustomizationSelection>();
         if (engineConfig != null)
             engineGearboxConfig = engineConfig;
         if (suspension != null)
@@ -193,5 +211,38 @@ public class PlayerCar : MonoBehaviour
             block.SetColor(propertyId, currentPaint);
             renderer.SetPropertyBlock(block);
         }
+    }
+
+    private PlayerCarVisualSettings ResolveVisualSettings()
+    {
+        if (config == null || config.Visual == null)
+            return null;
+
+        return CloneVisualSettings(config.Visual);
+    }
+
+    private static PlayerCarVisualSettings CloneVisualSettings(PlayerCarVisualSettings source)
+    {
+        if (source == null)
+            return null;
+
+        return new PlayerCarVisualSettings
+        {
+            bodyPrefab = source.bodyPrefab,
+            wheelPrefab = source.wheelPrefab,
+            addBodyCollider = source.addBodyCollider,
+            generateConvexBodyColliders = source.generateConvexBodyColliders,
+            wheelBase = source.wheelBase,
+            axleWidth = source.axleWidth,
+            zOffset = source.zOffset,
+            wheelHeight = source.wheelHeight,
+            bodyRootHeightFactor = source.bodyRootHeightFactor,
+            liveWheelPositions = source.liveWheelPositions,
+            useDefaultPaint = source.useDefaultPaint,
+            defaultPaint = source.defaultPaint,
+            paintProperty = source.paintProperty,
+            paintAllChildRenderers = source.paintAllChildRenderers,
+            paintRenderers = source.paintRenderers
+        };
     }
 }

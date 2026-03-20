@@ -1,0 +1,45 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e328cade975aa44cb5551224731483b, type: 3}
+  m_Name: MercedesTemplate_Loadout
+  m_EditorClassIdentifier: Assembly-CSharp::CarLoadoutConfig
+  icon: {fileID: 0}
+  displayName: Mercedes Template
+  playerCarConfig: {fileID: 11400000, guid: 40c7423670fe4b28be62e8e56830755e, type: 2}
+  handlingConfig: {fileID: 11400000, guid: 29b0f07b59984452b8dd550cf5022aa2, type: 2}
+  includeStockBodyOption: 1
+  bodySets:
+  - {fileID: 11400000, guid: e3bac4866d6a4da3b1518d05312a5b33, type: 2}
+  - {fileID: 11400000, guid: 1f7f1317c5ba45879771e50ba1c3d703, type: 2}
+  engineConfigs:
+  - {fileID: 11400000, guid: 3c2209a27b20432683aa2e85a63f5451, type: 2}
+  - {fileID: 11400000, guid: 1aff2c784c72469baa28e10e18ce2c5d, type: 2}
+  - {fileID: 11400000, guid: f4ec8668b1f34496801b1fffe8d0c277, type: 2}
+  suspensionConfigs:
+  - {fileID: 11400000, guid: 3fca82feda7f49439d7e8635b1b7c20b, type: 2}
+  - {fileID: 11400000, guid: b951081b4dd540c989bdce00d4889a94, type: 2}
+  - {fileID: 11400000, guid: 3cfca123e40d458c940c0bf85153080d, type: 2}
+  paintOptions:
+  - {fileID: 11400000, guid: bf8aafa273234d5bb625c1a5c443de51, type: 2}
+  - {fileID: 11400000, guid: 0f0de725192744808184cdc61e0e2c8f, type: 2}
+  - {fileID: 11400000, guid: 69f80ec69f4e4905bbe1feccd56f8e9e, type: 2}
+  - {fileID: 11400000, guid: ab2b502d76b94b4ab58f8cd938b5c360, type: 2}
+  - {fileID: 11400000, guid: 517b45df1821419c88078213c31c67c2, type: 2}
+  - {fileID: 11400000, guid: 34443dd1b5344f0e973a5be3a5483ee1, type: 2}
+  - {fileID: 11400000, guid: 90cbbb174c6b4e879c6748073d7432f4, type: 2}
+  - {fileID: 11400000, guid: 1a7cf6a83577437fae2e8b383690552d, type: 2}
+  - {fileID: 11400000, guid: a4614670a7bd4706bb6d2c064ea0986a, type: 2}
+  - {fileID: 11400000, guid: 2be92399779449cca529acb3153723ff, type: 2}
+  defaultBodySetIndex: -1
+  defaultEngineIndex: 1
+  defaultSuspensionIndex: 1
+  defaultPaintIndex: 0

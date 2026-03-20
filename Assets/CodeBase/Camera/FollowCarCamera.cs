@@ -117,10 +117,9 @@ public class FollowCarCamera : MonoBehaviour
     private static readonly Action<FollowCarCamera, Vector3> SetShakeLocalPosition = static (self, value) => self.shakeLocalPosition = value;
     private static readonly Action<FollowCarCamera, Vector3> SetShakeLocalRotation = static (self, value) => self.shakeLocalRotation = value;
     private float currentFocusDistance;
-    private bool hadDofOverride;
-    private float savedDofFocus;
-    private bool wasAiming;
+    private float defaultFocusDistance;
     private DepthOfField cachedDof;
+    private VolumeProfile runtimeAimVolumeProfile;
 
     private void Awake()
     {
@@ -128,6 +127,7 @@ public class FollowCarCamera : MonoBehaviour
         BuildReticleIfNeeded();
         cachedCamera = GetComponent<Camera>();
         ResolveAimVolume();
+        SetupAimDof();
         if (cachedCamera != null)
             cachedCamera.fieldOfView = baseFov;
 
@@ -239,7 +239,7 @@ public class FollowCarCamera : MonoBehaviour
         transform.rotation = smoothedLookRotation * Quaternion.Euler(shakeLocalRotation);
 
         UpdateFovBySpeed();
-        UpdateAimDof();
+        UpdateAimDof(pivot);
     }
 
     public void SetTarget(Transform newTarget)
@@ -415,69 +415,27 @@ public class FollowCarCamera : MonoBehaviour
 #endif
     }
 
-    private void UpdateAimDof()
+    private void UpdateAimDof(Vector3 pivot)
     {
-        bool aimHeld = IsAimHeldRaw();
         if (!adjustDofFocusWhileAiming)
-        {
-            RestoreDofIfNeeded(aimHeld);
             return;
-        }
 
         if (cachedCamera == null)
-        {
-            RestoreDofIfNeeded(aimHeld);
             return;
-        }
 
         DepthOfField dof = GetAimDof();
         if (dof == null || !dof.active)
-        {
-            RestoreDofIfNeeded(aimHeld);
             return;
-        }
 
-        if (aimHeld && !wasAiming)
-        {
-            hadDofOverride = dof.focusDistance.overrideState;
-            savedDofFocus = dof.focusDistance.value;
-            currentFocusDistance = savedDofFocus;
-        }
-
-        if (!aimHeld)
-        {
-            RestoreDofIfNeeded(aimHeld);
-            return;
-        }
-
-        Vector2 screenPos = GetAimScreenPosition();
-        Ray ray = cachedCamera.ScreenPointToRay(screenPos);
-        float targetDistance = aimFocusMaxDistance;
-        if (Physics.Raycast(ray, out RaycastHit hit, aimFocusMaxDistance, aimFocusMask, QueryTriggerInteraction.Ignore))
-            targetDistance = hit.distance;
+        float targetDistance = Vector3.Distance(transform.position, pivot);
+        if (targetDistance <= 0.01f)
+            targetDistance = defaultFocusDistance > 0.01f ? defaultFocusDistance : aimFocusMaxDistance;
 
         float lerp = 1.0f - Mathf.Exp(-aimFocusSmooth * Time.deltaTime);
         currentFocusDistance = Mathf.Lerp(currentFocusDistance, targetDistance, lerp);
 
         dof.focusDistance.overrideState = true;
         dof.focusDistance.value = currentFocusDistance;
-
-        wasAiming = true;
-    }
-
-    private void RestoreDofIfNeeded(bool aiming)
-    {
-        if (!wasAiming && !aiming)
-            return;
-
-        DepthOfField dof = GetAimDof();
-        if (dof != null)
-        {
-            dof.focusDistance.overrideState = hadDofOverride;
-            dof.focusDistance.value = savedDofFocus;
-        }
-
-        wasAiming = false;
     }
 
     private void ResolveAimVolume()
@@ -512,7 +470,10 @@ public class FollowCarCamera : MonoBehaviour
         if (aimVolume == null)
             return null;
 
-        VolumeProfile profile = aimVolume.sharedProfile != null ? aimVolume.sharedProfile : aimVolume.profile;
+        if (runtimeAimVolumeProfile == null)
+            SetupAimDof();
+
+        VolumeProfile profile = aimVolume.profile != null ? aimVolume.profile : runtimeAimVolumeProfile;
         if (profile == null)
             return null;
 
@@ -522,15 +483,28 @@ public class FollowCarCamera : MonoBehaviour
         return cachedDof;
     }
 
-    private static bool IsAimHeldRaw()
+    private void SetupAimDof()
     {
-#if ENABLE_INPUT_SYSTEM
-        if (Mouse.current != null)
-            return Mouse.current.rightButton.isPressed;
-        return false;
-#else
-        return Input.GetMouseButton(1);
-#endif
+        if (aimVolume == null)
+            return;
+
+        if (aimVolume.profile == null && aimVolume.sharedProfile != null)
+        {
+            runtimeAimVolumeProfile = Instantiate(aimVolume.sharedProfile);
+            runtimeAimVolumeProfile.name = aimVolume.sharedProfile.name + " (Runtime)";
+            aimVolume.profile = runtimeAimVolumeProfile;
+        }
+        else
+        {
+            runtimeAimVolumeProfile = aimVolume.profile;
+        }
+
+        if (runtimeAimVolumeProfile == null || !runtimeAimVolumeProfile.TryGet(out cachedDof) || cachedDof == null)
+            return;
+
+        defaultFocusDistance = cachedDof.focusDistance.value;
+        currentFocusDistance = defaultFocusDistance;
+        cachedDof.focusDistance.overrideState = true;
     }
 
     public void PlayShotShake(float strengthMultiplier = 1.0f)

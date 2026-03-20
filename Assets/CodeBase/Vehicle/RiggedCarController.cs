@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 public class RiggedCarController : CarControllerBase
 {
@@ -19,6 +20,9 @@ public class RiggedCarController : CarControllerBase
     [Header("Rig Options")]
     [HideInInspector, SerializeField, Range(0.0f, 1.0f)] private float bodyRootHeightFactor = 0.3f;
     [HideInInspector, SerializeField] private bool liveWheelPositions = true;
+    [HideInInspector, SerializeField] private BodySetConfig bodySetConfig;
+    [HideInInspector, SerializeField] private List<CarCustomizationSelection> customizationSelections = new List<CarCustomizationSelection>();
+    private Transform activeBodySetInstance;
 
     public void ApplyVisualSettings(PlayerCarVisualSettings settings)
     {
@@ -61,6 +65,27 @@ public class RiggedCarController : CarControllerBase
             ApplyWheelPositions();
     }
 
+    public void ApplyBodySetConfig(BodySetConfig bodySet)
+    {
+        bodySetConfig = bodySet;
+        if (!Application.isPlaying)
+            return;
+
+        ApplyBodySetToCurrentBody();
+    }
+
+    public void ApplyCustomizationSelections(IReadOnlyList<CarCustomizationSelection> selections)
+    {
+        customizationSelections = selections != null
+            ? new List<CarCustomizationSelection>(selections)
+            : new List<CarCustomizationSelection>();
+
+        if (!Application.isPlaying)
+            return;
+
+        ApplyCustomizationsToCurrentBody();
+    }
+
     protected override void BuildCar()
     {
         if (bodyPrefab != null)
@@ -73,6 +98,8 @@ public class RiggedCarController : CarControllerBase
             if (generateConvexBodyColliders)
                 GenerateConvexBodyColliders(bodyInstance);
         }
+
+        ApplyBodySetToCurrentBody();
 
         Vector3 flPos;
         Vector3 frPos;
@@ -160,6 +187,15 @@ public class RiggedCarController : CarControllerBase
             GenerateConvexBodyColliders(bodyInstance);
 
         UpdateCenterOfMass();
+
+        if (!generateConvexBodyColliders)
+        {
+            CarDamageController damageController = GetComponent<CarDamageController>();
+            if (damageController != null)
+                damageController.ReinitializeFromBody(bodyInstance);
+        }
+
+        ApplyBodySetToCurrentBody();
     }
 
     private void RebuildWheelVisuals()
@@ -280,7 +316,7 @@ public class RiggedCarController : CarControllerBase
 
         CarDamageController damageController = GetComponent<CarDamageController>();
         if (damageController != null)
-            damageController.InitializeFromBody(bodyInstance);
+            damageController.ReinitializeFromBody(bodyInstance);
     }
 
     private static bool IsUnderTaggedTransform(Transform node, string tag)
@@ -294,6 +330,56 @@ public class RiggedCarController : CarControllerBase
         }
 
         return false;
+    }
+
+    private void ApplyBodySetToCurrentBody()
+    {
+        Transform body = transform.Find("Body");
+        if (body == null)
+            return;
+        if (activeBodySetInstance != null)
+        {
+            Destroy(activeBodySetInstance.gameObject);
+            activeBodySetInstance = null;
+        }
+
+        if (bodySetConfig == null || bodySetConfig.BodySetPrefab == null)
+        {
+            ApplyCustomizationsToCurrentBody();
+            return;
+        }
+
+        GameObject instance = Instantiate(bodySetConfig.BodySetPrefab, body);
+        instance.name = bodySetConfig.BodySetPrefab.name;
+        instance.transform.localPosition = Vector3.zero;
+        instance.transform.localRotation = Quaternion.identity;
+        instance.transform.localScale = Vector3.one;
+
+        Transform root = body.Find("Root");
+        if (root != null)
+            instance.transform.SetSiblingIndex(root.GetSiblingIndex() + 1);
+
+        activeBodySetInstance = instance.transform;
+        ApplyCustomizationsToCurrentBody();
+
+        if (generateConvexBodyColliders)
+        {
+            GenerateConvexBodyColliders(body.gameObject);
+            return;
+        }
+
+        CarDamageController damageController = GetComponent<CarDamageController>();
+        if (damageController != null)
+            damageController.ReinitializeFromBody(body.gameObject);
+    }
+
+    private void ApplyCustomizationsToCurrentBody()
+    {
+        Transform body = transform.Find("Body");
+        if (body == null)
+            return;
+
+        CarCustomizationUtility.ApplySelections(body, customizationSelections);
     }
 
     private void StripPhysicsComponents(GameObject root)

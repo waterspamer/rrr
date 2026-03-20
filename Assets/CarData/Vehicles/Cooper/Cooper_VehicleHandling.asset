@@ -1,0 +1,147 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2cbae00741dbfca46a40e59e61702f65, type: 3}
+  m_Name: Cooper_VehicleHandling
+  m_EditorClassIdentifier: Assembly-CSharp::VehicleSettings
+  autoCreateHud: 1
+  maxSteerAngle: 28
+  steerResponse: 8
+  steerBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 50
+      value: 0.7
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 120
+      value: 0.4
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  brakePower: 2200
+  handbrakePower: 4000
+  forwardFriction: 1.8
+  sidewaysFriction: 2
+  handbrakeFrictionMultiplier: 0.35
+  handbrakeSidewaysBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 40
+      value: 0.7
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 90
+      value: 0.4
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  driftKickSteerThreshold: 0.2
+  driftKickMaxForce: 6000
+  driftKickRearOffset: 1.2
+  driftKickResponse: 6
+  driftKickBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 30
+      value: 0.6
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 80
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  lateralStability: 4
+  yawStability: 2.5
+  forwardExtremumSlip: 1
+  forwardExtremumValue: 1
+  forwardAsymptoteSlip: 2
+  forwardAsymptoteValue: 0.5
+  sidewaysExtremumSlip: 1
+  sidewaysExtremumValue: 1
+  sidewaysAsymptoteSlip: 2
+  sidewaysAsymptoteValue: 0.5
+  wheelRadius: 0.35
+  wheelWidth: 0.2
+  mass: 1200
+  downforce: 0.2
+  rollingResistance: 20
+  aerodynamicDrag: 0.35
+  nitroEnabled: 1
+  nitroStart: 1
+  nitroRegenPerSecond: 0.25
+  nitroDrainPerSecond: 0.5
+  nitroPowerMultiplier: 1.25
+  nitroRpmResponseMultiplier: 1.5

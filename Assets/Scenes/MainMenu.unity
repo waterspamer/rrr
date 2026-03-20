@@ -154,9 +154,11 @@ MonoBehaviour:
   handlingConfig: {fileID: 11400000, guid: 4a48068942af91645b615f3244a02d18, type: 2}
   engineGearboxConfig: {fileID: 11400000, guid: fe9434f5a7c79574e9fd807454f70273, type: 2}
   suspensionConfig: {fileID: 11400000, guid: 3f72f17352309bf419a2e34754296b64, type: 2}
+  bodySetConfig: {fileID: 0}
   controller: {fileID: 5922110}
   riggedController: {fileID: 5922110}
   damageController: {fileID: 0}
+  customizationSelections: []
 --- !u!4 &5922109
 Transform:
   m_ObjectHideFlags: 0
@@ -409,7 +411,7 @@ MonoBehaviour:
   debugDragColor: {r: 1, g: 0.3, b: 0.7, a: 1}
   debugStabilityColor: {r: 0.3, g: 1, b: 0.4, a: 1}
   debugDriftColor: {r: 1, g: 0.9, b: 0.2, a: 1}
-  bodyPrefab: {fileID: 7754784111764005080, guid: 395f9b001a289ae42832b54b22df169c, type: 3}
+  bodyPrefab: {fileID: 8780659057599423016, guid: 725cb655a06a4088aa46984fdc66fc46, type: 3}
   wheelPrefab: {fileID: 7719241193873247119, guid: 5b3e105503d4bbb4c8cc779b608b8070, type: 3}
   addBodyCollider: 0
   generateConvexBodyColliders: 1
@@ -419,6 +421,8 @@ MonoBehaviour:
   wheelHeight: 0.24
   bodyRootHeightFactor: 0.3
   liveWheelPositions: 1
+  bodySetConfig: {fileID: 0}
+  customizationSelections: []
 --- !u!54 &5922111
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -573,6 +577,122 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
+--- !u!1001 &381535586
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 3.2003982
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.0000009577792
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -1.256843
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -7511558181221131132, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_CastShadows
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -7511558181221131132, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 0b0bdd634fb4b8f41b856f7242f743bb, type: 2}
+    - target: {fileID: -2544480043430378828, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -2450776406375912983, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -2450776406375912983, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: fa6c876703e7a85459cad75f251218ff, type: 2}
+    - target: {fileID: -980407718473878157, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 115a3cf2b2c203e41a8c9aac410a88c3, type: 2}
+    - target: {fileID: 919132149155446097, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: m_Name
+      value: coconut palm
+      objectReference: {fileID: 0}
+    - target: {fileID: 1122427853962064952, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 4db202a53a5dc3a43ace266a69613028, type: 2}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: bd527cece83aade4cb271782394140a0, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 381535588}
+  m_SourcePrefab: {fileID: 100100000, guid: bd527cece83aade4cb271782394140a0, type: 3}
+--- !u!1 &381535587 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: bd527cece83aade4cb271782394140a0, type: 3}
+  m_PrefabInstance: {fileID: 381535586}
+  m_PrefabAsset: {fileID: 0}
+--- !u!136 &381535588
+CapsuleCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 381535587}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Radius: 0.23
+  m_Height: 3.29
+  m_Direction: 1
+  m_Center: {x: 0.05, y: 1.47, z: -0.07}
 --- !u!1 &529766314
 GameObject:
   m_ObjectHideFlags: 0
@@ -948,7 +1068,8 @@ MonoBehaviour:
   disableInGarage: []
   carLoadouts:
   - {fileID: 11400000, guid: 1fbefcd0b785f1e4ba611413fe0bcf44, type: 2}
-  - {fileID: 11400000, guid: 2bed882ed99b4e648df6cc3486d13835, type: 2}
+  - {fileID: 11400000, guid: 792ada42b2244d61b619edc94f85a449, type: 2}
+  - {fileID: 11400000, guid: 3d35ce58efffb734e88ad83f262743ea, type: 2}
   gameSceneName: Game
   debugOverlay: 0
 --- !u!114 &1091831628
@@ -1161,3 +1282,4 @@ SceneRoots:
   - {fileID: 529766318}
   - {fileID: 1717329780}
   - {fileID: 9200000001}
+  - {fileID: 381535586}

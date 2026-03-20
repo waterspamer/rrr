@@ -1,0 +1,42 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e328cade975aa44cb5551224731483b, type: 3}
+  m_Name: Cooper_Loadout
+  m_EditorClassIdentifier: Assembly-CSharp::CarLoadoutConfig
+  icon: {fileID: 0}
+  displayName: Mini Cooper
+  playerCarConfig: {fileID: 11400000, guid: 63d29d786a95dc645a890ff717522300, type: 2}
+  handlingConfig: {fileID: 11400000, guid: a8f5197fcd963784a9dca53d92271c8e, type: 2}
+  includeStockBodyOption: 1
+  bodySets: []
+  engineConfigs:
+  - {fileID: 11400000, guid: 157e09c421b5aa6489641b2aba10a73a, type: 2}
+  suspensionConfigs:
+  - {fileID: 11400000, guid: 4e294589e34968043a9c368a8a3a0789, type: 2}
+  paintOptions:
+  - {fileID: 11400000, guid: 7394eb72f3ce08945a7affb4f4245367, type: 2}
+  - {fileID: 11400000, guid: b866780456cb7d1499c0882b6ea99251, type: 2}
+  - {fileID: 11400000, guid: 1943d3fa3056e9841b60ae1683af2965, type: 2}
+  - {fileID: 11400000, guid: 42efc99aeb63bc74d895614e68a428cb, type: 2}
+  - {fileID: 11400000, guid: 0c3215284151fb64583077507b0de9aa, type: 2}
+  - {fileID: 11400000, guid: 8c1d2e3f4a5b6789c0d1e2f3a4b5c6d7, type: 2}
+  - {fileID: 11400000, guid: 91ab23cd45ef6789ab01cd23ef45ab67, type: 2}
+  - {fileID: 11400000, guid: a2b3c4d5e6f708192a3b4c5d6e7f8091, type: 2}
+  - {fileID: 11400000, guid: b1c2d3e4f5a60718293a4b5c6d7e8f90, type: 2}
+  - {fileID: 11400000, guid: c0ffee1234abcd5678ef9012abcd3456, type: 2}
+  - {fileID: 11400000, guid: d12e34f56a78bc9012de34f56a78bc90, type: 2}
+  - {fileID: 11400000, guid: e1f2a3b4c5d60718293a4b5c6d7e8f91, type: 2}
+  - {fileID: 11400000, guid: f0e1d2c3b4a5968778695a4b3c2d1e0f, type: 2}
+  defaultBodySetIndex: -1
+  defaultEngineIndex: 0
+  defaultSuspensionIndex: 0
+  defaultPaintIndex: 0

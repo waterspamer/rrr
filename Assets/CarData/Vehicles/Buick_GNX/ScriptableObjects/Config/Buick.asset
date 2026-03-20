@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Buick
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCarConfig
   visual:
-    bodyPrefab: {fileID: 7754784111764005080, guid: 395f9b001a289ae42832b54b22df169c, type: 3}
+    bodyPrefab: {fileID: 8780659057599423016, guid: 725cb655a06a4088aa46984fdc66fc46, type: 3}
     wheelPrefab: {fileID: 7719241193873247119, guid: 5b3e105503d4bbb4c8cc779b608b8070, type: 3}
     addBodyCollider: 0
     generateConvexBodyColliders: 1
