@@ -25,10 +25,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(2)] private int remoteSnapshotBufferSize = 32;
     [SerializeField, Min(0.5f)] private float remoteTeleportDistance = 12.0f;
 
-    [Header("Collision Response")]
-    [SerializeField, Range(0.0f, 1.0f)] private float authoritativeImpulseBlend = 0.65f;
-    [SerializeField, Min(0.0f)] private float authoritativeImpulseClamp = 12000.0f;
-
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
     private float nextPingTime;
@@ -461,7 +457,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             recentLocalPairCollisions[pairKey] = Time.unscaledTime;
         }
 
-        ApplyAuthoritativeImpulse(message);
     }
 
     private void HandleRealtimeErrorReceived(BackendRealtimeErrorMessage error)
@@ -602,24 +597,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             : secondPlayerId + "|" + firstPlayerId;
     }
 
-    private void ApplyAuthoritativeImpulse(BackendCollisionEventMessage message)
-    {
-        if (localPlayerCar == null)
-            localPlayerCar = FindFirstObjectByType<PlayerCar>();
-
-        Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
-        if (body == null)
-            return;
-
-        Vector3 impulse = message.ImpulseVector * Mathf.Clamp01(authoritativeImpulseBlend);
-        if (authoritativeImpulseClamp > 0.0f && impulse.magnitude > authoritativeImpulseClamp)
-            impulse = impulse.normalized * authoritativeImpulseClamp;
-        if (impulse.sqrMagnitude <= 0.0001f)
-            return;
-
-        body.AddForceAtPosition(impulse, message.WorldPointVector, ForceMode.Impulse);
-    }
-
     private sealed class RemotePlayerProxy
     {
         private sealed class RemoteWheelBinding
@@ -647,6 +624,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         private readonly GameObject root;
         private readonly Transform transform;
+        private Rigidbody physicsBody;
         private readonly Material fallbackMaterial;
         private readonly Color fallbackColor;
         private readonly int snapshotBufferSize;
@@ -722,11 +700,27 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
             if (Vector3.Distance(transform.position, desiredPosition) >= teleportDistance)
             {
-                transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+                if (physicsBody != null)
+                {
+                    physicsBody.position = desiredPosition;
+                    physicsBody.rotation = desiredRotation;
+                }
+                else
+                {
+                    transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+                }
                 return;
             }
 
-            transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+            if (physicsBody != null && physicsBody.isKinematic)
+            {
+                physicsBody.MovePosition(desiredPosition);
+                physicsBody.MoveRotation(desiredRotation);
+            }
+            else
+            {
+                transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+            }
         }
 
         public void Dispose()
@@ -874,6 +868,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 if (damageController != null)
                     damageController.EnsureNetworkTextureReady();
             }
+
+            if (visualReady && physicsBody == null)
+                physicsBody = root.GetComponent<Rigidbody>();
 
             if (visualReady && wheelBindings.Count == 0)
                 ResolveWheelBindings();
