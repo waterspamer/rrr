@@ -25,6 +25,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(2)] private int remoteSnapshotBufferSize = 32;
     [SerializeField, Min(0.5f)] private float remoteTeleportDistance = 12.0f;
 
+    [Header("Collision Response")]
+    [SerializeField, Range(0.0f, 1.0f)] private float authoritativeImpulseBlend = 0.65f;
+    [SerializeField, Min(0.0f)] private float authoritativeImpulseClamp = 12000.0f;
+
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
     private float nextPingTime;
@@ -196,7 +200,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             position = BackendVector3.FromVector3(root.position),
             rotation = BackendVector3.FromVector3(root.eulerAngles),
-            velocity = BackendVector3.FromVector3(body != null ? body.linearVelocity : Vector3.zero)
+            velocity = BackendVector3.FromVector3(body != null ? body.linearVelocity : Vector3.zero),
+            angular_velocity = BackendVector3.FromVector3(body != null ? body.angularVelocity : Vector3.zero)
         };
 
         for (int i = 0; i < localWheelBindings.Count; i++)
@@ -330,6 +335,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     playerState.PositionVector,
                     Quaternion.Euler(playerState.RotationVector),
                     playerState.VelocityVector,
+                    playerState.AngularVelocityVector,
                     playerState.wheel_states);
             }
         }
@@ -410,6 +416,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             world_point = BackendVector3.FromVector3(report.worldPoint),
             world_normal = BackendVector3.FromVector3(report.worldNormal),
             relative_velocity = BackendVector3.FromVector3(report.relativeVelocity),
+            impulse_vector = BackendVector3.FromVector3(report.impulseVector),
             impulse_magnitude = report.impulseMagnitude
         };
 
@@ -453,6 +460,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             recentLocalPairCollisions[pairKey] = Time.unscaledTime;
         }
+
+        ApplyAuthoritativeImpulse(message);
     }
 
     private void HandleRealtimeErrorReceived(BackendRealtimeErrorMessage error)
@@ -593,6 +602,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             : secondPlayerId + "|" + firstPlayerId;
     }
 
+    private void ApplyAuthoritativeImpulse(BackendCollisionEventMessage message)
+    {
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+
+        Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
+        if (body == null)
+            return;
+
+        Vector3 impulse = message.ImpulseVector * Mathf.Clamp01(authoritativeImpulseBlend);
+        if (authoritativeImpulseClamp > 0.0f && impulse.magnitude > authoritativeImpulseClamp)
+            impulse = impulse.normalized * authoritativeImpulseClamp;
+        if (impulse.sqrMagnitude <= 0.0001f)
+            return;
+
+        body.AddForceAtPosition(impulse, message.WorldPointVector, ForceMode.Impulse);
+    }
+
     private sealed class RemotePlayerProxy
     {
         private sealed class RemoteWheelBinding
@@ -606,13 +633,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             public readonly Vector3 Position;
             public readonly Quaternion Rotation;
             public readonly Vector3 Velocity;
+            public readonly Vector3 AngularVelocity;
 
-            public RemoteSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity)
+            public RemoteSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity, Vector3 angularVelocity)
             {
                 LocalTime = localTime;
                 Position = position;
                 Rotation = rotation;
                 Velocity = velocity;
+                AngularVelocity = angularVelocity;
             }
         }
 
@@ -652,7 +681,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 transform.position = matchPlayer.SpawnPositionVector;
                 transform.rotation = Quaternion.Euler(matchPlayer.SpawnRotationVector);
-                snapshots.Add(new RemoteSnapshot(Time.unscaledTimeAsDouble, transform.position, transform.rotation, Vector3.zero));
+                snapshots.Add(new RemoteSnapshot(Time.unscaledTimeAsDouble, transform.position, transform.rotation, Vector3.zero, Vector3.zero));
             }
 
             EnsureVisual(matchPlayer, lobbyPlayer, fallbackCarConfig);
@@ -673,10 +702,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             Vector3 position,
             Quaternion rotation,
             Vector3 velocity,
+            Vector3 angularVelocity,
             List<BackendWheelPose> wheelStates)
         {
             EnsureVisual(null);
-            PushSnapshot(ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs), position, rotation, velocity);
+            PushSnapshot(ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs), position, rotation, velocity, angularVelocity);
             ApplyWheelStates(wheelStates);
         }
 
@@ -744,7 +774,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             appliedDamageRevision = message.revision;
         }
 
-        private void PushSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity)
+        private void PushSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity, Vector3 angularVelocity)
         {
             if (snapshots.Count > 0)
             {
@@ -753,7 +783,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     localTime = newest.LocalTime + 0.0001d;
             }
 
-            snapshots.Add(new RemoteSnapshot(localTime, position, rotation, velocity));
+            snapshots.Add(new RemoteSnapshot(localTime, position, rotation, velocity, angularVelocity));
             if (snapshots.Count > snapshotBufferSize)
                 snapshots.RemoveRange(0, snapshots.Count - snapshotBufferSize);
         }
@@ -783,7 +813,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 RemoteSnapshot only = snapshots[0];
                 double dt = Math.Min(Math.Max(0.0d, renderTime - only.LocalTime), extrapolationLimit);
                 position = only.Position + only.Velocity * (float)dt;
-                rotation = only.Rotation;
+                rotation = only.AngularVelocity.sqrMagnitude > 0.0001f
+                    ? only.Rotation * Quaternion.Euler(only.AngularVelocity * Mathf.Rad2Deg * (float)dt)
+                    : only.Rotation;
                 return;
             }
 
@@ -814,7 +846,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             RemoteSnapshot latest = snapshots[snapshots.Count - 1];
             double extrapolation = Math.Min(Math.Max(0.0d, renderTime - latest.LocalTime), extrapolationLimit);
             position = latest.Position + latest.Velocity * (float)extrapolation;
-            rotation = latest.Rotation;
+            rotation = latest.AngularVelocity.sqrMagnitude > 0.0001f
+                ? latest.Rotation * Quaternion.Euler(latest.AngularVelocity * Mathf.Rad2Deg * (float)extrapolation)
+                : latest.Rotation;
         }
 
         private void EnsureVisual(BackendMatchPlayerInfo matchPlayer, BackendLobbyPlayer lobbyPlayer, BackendCarConfigPayload fallbackCarConfig)

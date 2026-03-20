@@ -19,6 +19,7 @@ public sealed class NetworkVehicleCollisionReport
     public Vector3 worldPoint;
     public Vector3 worldNormal;
     public Vector3 relativeVelocity;
+    public Vector3 impulseVector;
     public float impulseMagnitude;
 }
 
@@ -142,6 +143,7 @@ public partial class CarDamageController
             worldPoint = worldPoint,
             worldNormal = worldNormal,
             relativeVelocity = collision.relativeVelocity,
+            impulseVector = collision.impulse,
             impulseMagnitude = collision.impulse.magnitude
         });
     }

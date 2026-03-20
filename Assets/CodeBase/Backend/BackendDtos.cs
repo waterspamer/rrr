@@ -187,6 +187,7 @@ public sealed class BackendPlayerStateSnapshot
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;
+    public BackendVector3 angular_velocity;
     public List<BackendWheelPose> wheel_states = new List<BackendWheelPose>();
 }
 
@@ -224,11 +225,13 @@ public sealed class BackendCollisionEventMessage
     public BackendVector3 world_point;
     public BackendVector3 world_normal;
     public BackendVector3 relative_velocity;
+    public BackendVector3 impulse_vector;
     public float impulse_magnitude;
 
     public Vector3 WorldPointVector => world_point != null ? world_point.ToVector3() : Vector3.zero;
     public Vector3 WorldNormalVector => world_normal != null ? world_normal.ToVector3() : Vector3.up;
     public Vector3 RelativeVelocityVector => relative_velocity != null ? relative_velocity.ToVector3() : Vector3.zero;
+    public Vector3 ImpulseVector => impulse_vector != null ? impulse_vector.ToVector3() : Vector3.zero;
 }
 
 [Serializable]
@@ -348,11 +351,13 @@ public sealed class BackendMatchPlayerState
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;
+    public BackendVector3 angular_velocity;
     public List<BackendWheelPose> wheel_states = new List<BackendWheelPose>();
 
     public Vector3 PositionVector => position != null ? position.ToVector3() : Vector3.zero;
     public Vector3 RotationVector => rotation != null ? rotation.ToVector3() : Vector3.zero;
     public Vector3 VelocityVector => velocity != null ? velocity.ToVector3() : Vector3.zero;
+    public Vector3 AngularVelocityVector => angular_velocity != null ? angular_velocity.ToVector3() : Vector3.zero;
 }
 
 [Serializable]
