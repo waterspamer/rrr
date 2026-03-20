@@ -3,6 +3,7 @@ param(
     [string]$Username = "root",
     [string]$Password = $env:RRR_SERVER_PASSWORD,
     [string]$RemoteRoot = "/var/www/rrr-webgl",
+    [string]$DesktopDownloadsRoot = "/var/www/rrr-downloads/windows",
     [string]$NginxSitePath = "/etc/nginx/sites-available/rrr-demo.tonforspeed.space"
 )
 
@@ -16,6 +17,7 @@ $env:RRR_WEBGL_HOST = $ServerHost
 $env:RRR_WEBGL_USERNAME = $Username
 $env:RRR_WEBGL_PASSWORD = $Password
 $env:RRR_WEBGL_REMOTE_ROOT = $RemoteRoot
+$env:RRR_DESKTOP_DOWNLOADS_ROOT = $DesktopDownloadsRoot
 $env:RRR_WEBGL_NGINX_SITE_PATH = $NginxSitePath
 
 @'
@@ -30,12 +32,13 @@ host = os.environ["RRR_WEBGL_HOST"]
 username = os.environ["RRR_WEBGL_USERNAME"]
 password = os.environ["RRR_WEBGL_PASSWORD"]
 remote_root = os.environ["RRR_WEBGL_REMOTE_ROOT"].rstrip("/")
+desktop_root = os.environ["RRR_DESKTOP_DOWNLOADS_ROOT"].rstrip("/")
 nginx_site_path = os.environ["RRR_WEBGL_NGINX_SITE_PATH"]
 brotli_filter_conf = "/etc/nginx/modules-enabled/50-mod-http-brotli-filter.conf"
 brotli_static_conf = "/etc/nginx/modules-enabled/50-mod-http-brotli-static.conf"
 
-begin_marker = "    # BEGIN RRR WEBGL"
-end_marker = "    # END RRR WEBGL"
+begin_marker = "# BEGIN RRR WEBGL"
+end_marker = "# END RRR WEBGL"
 
 block = textwrap.dedent(f"""
     # BEGIN RRR WEBGL
@@ -68,6 +71,37 @@ block = textwrap.dedent(f"""
         add_header Cache-Control "public, max-age=31536000, immutable";
         add_header Vary "Accept-Encoding" always;
     }}
+
+    location = /downloads/windows {{
+        return 301 /downloads/windows/;
+    }}
+
+    location = /downloads/windows/ {{
+        return 302 /downloads/windows/index.html;
+    }}
+
+    location = /downloads/windows/index.html {{
+        alias {desktop_root}/index.html;
+        default_type text/html;
+        add_header Cache-Control "no-store";
+    }}
+
+    location = /downloads/windows/latest.zip {{
+        alias {desktop_root}/latest.zip;
+        default_type application/zip;
+        add_header Cache-Control "no-store";
+    }}
+
+    location = /downloads/windows/latest.json {{
+        alias {desktop_root}/latest.json;
+        default_type application/json;
+        add_header Cache-Control "no-store";
+    }}
+
+    location /downloads/windows/releases/ {{
+        alias {desktop_root}/releases/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }}
     # END RRR WEBGL
 """).strip("\n") + "\n\n"
 
@@ -92,6 +126,28 @@ placeholder = textwrap.dedent("""
     <h1>Russian Road Rage WebGL</h1>
     <p>The WebGL host is configured and waiting for the first release.</p>
     <p>Public URL: <code>/play/</code></p>
+  </main>
+</body>
+</html>
+""").strip() + "\n"
+
+desktop_placeholder = textwrap.dedent("""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Russian Road Rage Downloads</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0d11; color: #f6f7f8; font: 16px/1.5 Segoe UI, sans-serif; }
+    main { width: min(640px, calc(100vw - 48px)); padding: 32px; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: rgba(9,12,16,.78); }
+    a { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Russian Road Rage Downloads</h1>
+    <p>Windows builds will appear here after the first desktop release.</p>
   </main>
 </body>
 </html>
@@ -122,7 +178,7 @@ with sftp.open(nginx_site_path, "r") as f:
 
 pattern = re.compile(re.escape(begin_marker) + r".*?" + re.escape(end_marker) + r"\n*", re.S)
 
-legacy_marker = "    location = /play {"
+legacy_marker = "location = /play {"
 main_location_marker = "    location / {"
 if legacy_marker in content and main_location_marker in content:
     legacy_start = content.index(legacy_marker)
@@ -145,6 +201,8 @@ for path in [
     posixpath.join(remote_root, "releases"),
     posixpath.join(remote_root, "tmp"),
     posixpath.join(remote_root, "releases", "placeholder"),
+    desktop_root,
+    posixpath.join(desktop_root, "releases"),
 ]:
     stdin, stdout, stderr = client.exec_command(f"mkdir -p {path}")
     stdout.channel.recv_exit_status()
@@ -153,9 +211,20 @@ placeholder_path = posixpath.join(remote_root, "releases", "placeholder", "index
 with sftp.open(placeholder_path, "w") as f:
     f.write(placeholder.encode("utf-8"))
 
+desktop_index_path = posixpath.join(desktop_root, "index.html")
+with sftp.open(desktop_index_path, "w") as f:
+    f.write(desktop_placeholder.encode("utf-8"))
+
+desktop_latest_json_path = posixpath.join(desktop_root, "latest.json")
+with sftp.open(desktop_latest_json_path, "w") as f:
+    f.write(b'{ "available": false }\n')
+
 commands = [
     f"ln -sfn {posixpath.join(remote_root, 'releases', 'placeholder')} {posixpath.join(remote_root, 'current')}",
-    f"chmod -R 755 {remote_root}",
+    f"find {remote_root} -type d -exec chmod 755 {{}} \\;",
+    f"find {remote_root} -type f -exec chmod 644 {{}} \\;",
+    f"find {desktop_root} -type d -exec chmod 755 {{}} \\;",
+    f"find {desktop_root} -type f -exec chmod 644 {{}} \\;",
     "nginx -t",
     "systemctl reload nginx",
 ]
@@ -171,4 +240,4 @@ sftp.close()
 client.close()
 '@ | python -
 
-Write-Host "WebGL host configured at https://rrr-demo.tonforspeed.space/play/"
+Write-Host "Release hosts configured at https://rrr-demo.tonforspeed.space/play/ and https://rrr-demo.tonforspeed.space/downloads/windows/"
