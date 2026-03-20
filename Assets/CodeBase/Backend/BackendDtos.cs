@@ -172,23 +172,21 @@ public sealed class BackendPingMessage
 }
 
 [Serializable]
-public sealed class BackendPlayerInputMessage
+public sealed class BackendPlayerStateMessage
 {
-    public string type = "player_input";
+    public string type = "player_state";
     public string match_id;
     public int seq;
     public long client_time;
-    public BackendPlayerInput input;
+    public BackendPlayerStateSnapshot state;
 }
 
 [Serializable]
-public sealed class BackendPlayerInput
+public sealed class BackendPlayerStateSnapshot
 {
-    public float throttle;
-    public float brake;
-    public float steer;
-    public bool handbrake;
-    public bool nitro;
+    public BackendVector3 position;
+    public BackendVector3 rotation;
+    public BackendVector3 velocity;
 }
 
 [Serializable]
@@ -228,6 +226,14 @@ public sealed class BackendLobbyStartingMessage
     public string type;
     public string lobby_id;
     public int countdown_sec;
+}
+
+[Serializable]
+public sealed class BackendLobbyClosedMessage
+{
+    public string type;
+    public string lobby_id;
+    public string reason;
 }
 
 [Serializable]

@@ -72,7 +72,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (Time.unscaledTime >= nextInputSendTime)
         {
             nextInputSendTime = Time.unscaledTime + (1.0f / Mathf.Max(1.0f, inputSendRate));
-            _ = SendInputAsync();
+            _ = SendLocalStateAsync();
         }
 
         if (Time.unscaledTime >= nextPingTime)
@@ -116,7 +116,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
-    private async Task SendInputAsync()
+    private async Task SendLocalStateAsync()
     {
         if (!IsMultiplayerActive())
             return;
@@ -124,11 +124,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         try
         {
             await EnsureRealtimeReadyAsync();
-            await Backend.Client.SendPlayerInputAsync(activeMatchId, ++inputSequence, CaptureInput());
+            await Backend.Client.SendPlayerStateAsync(activeMatchId, ++inputSequence, CaptureLocalState());
         }
         catch (Exception ex)
         {
-            Debug.LogWarning("MultiplayerMatchRuntime: failed to send input. " + ex.Message, this);
+            Debug.LogWarning("MultiplayerMatchRuntime: failed to send player state. " + ex.Message, this);
         }
     }
 
@@ -147,39 +147,19 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
-    private BackendPlayerInput CaptureInput()
+    private BackendPlayerStateSnapshot CaptureLocalState()
     {
-        float vertical;
-        float horizontal;
-        bool handbrake;
-        bool nitro;
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
 
-#if ENABLE_INPUT_SYSTEM
-        if (Keyboard.current != null)
-        {
-            vertical = (Keyboard.current.wKey.isPressed ? 1.0f : 0.0f) +
-                       (Keyboard.current.sKey.isPressed ? -1.0f : 0.0f);
-            horizontal = (Keyboard.current.dKey.isPressed ? 1.0f : 0.0f) +
-                         (Keyboard.current.aKey.isPressed ? -1.0f : 0.0f);
-            handbrake = Keyboard.current.spaceKey.isPressed;
-            nitro = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
-        }
-        else
-#endif
-        {
-            vertical = Input.GetAxis("Vertical");
-            horizontal = Input.GetAxis("Horizontal");
-            handbrake = Input.GetKey(KeyCode.Space);
-            nitro = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-        }
+        Transform root = localPlayerCar != null ? localPlayerCar.transform : transform;
+        Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
 
-        return new BackendPlayerInput
+        return new BackendPlayerStateSnapshot
         {
-            throttle = Mathf.Clamp01(vertical),
-            brake = Mathf.Clamp01(-vertical),
-            steer = Mathf.Clamp(horizontal, -1.0f, 1.0f),
-            handbrake = handbrake,
-            nitro = nitro
+            position = BackendVector3.FromVector3(root.position),
+            rotation = BackendVector3.FromVector3(root.eulerAngles),
+            velocity = BackendVector3.FromVector3(body != null ? body.linearVelocity : Vector3.zero)
         };
     }
 

@@ -199,14 +199,14 @@ public sealed class BackendClient
         });
     }
 
-    public Task SendPlayerInputAsync(string matchId, int sequence, BackendPlayerInput input)
+    public Task SendPlayerStateAsync(string matchId, int sequence, BackendPlayerStateSnapshot state)
     {
-        BackendPlayerInputMessage message = new BackendPlayerInputMessage
+        BackendPlayerStateMessage message = new BackendPlayerStateMessage
         {
             match_id = matchId,
             seq = sequence,
             client_time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            input = input
+            state = state
         };
 
         return socket.SendAsync(message);
@@ -241,6 +241,19 @@ public sealed class BackendClient
                 if (CurrentLobby != null && string.Equals(CurrentLobby.lobby_id, created.lobby_id, StringComparison.OrdinalIgnoreCase))
                     CurrentLobby.match_id = created.match_id;
                 MatchInfoChanged?.Invoke(CurrentMatchInfo);
+                break;
+            case "lobby_closed":
+                BackendLobbyClosedMessage lobbyClosed = JsonUtility.FromJson<BackendLobbyClosedMessage>(json);
+                if (CurrentLobby != null &&
+                    lobbyClosed != null &&
+                    string.Equals(CurrentLobby.lobby_id, lobbyClosed.lobby_id, StringComparison.OrdinalIgnoreCase))
+                {
+                    CurrentLobby = null;
+                    CurrentMatchInfo = null;
+                    LatestMatchState = null;
+                    LobbyChanged?.Invoke(null);
+                    MatchInfoChanged?.Invoke(null);
+                }
                 break;
             case "match_started":
                 if (CurrentMatchInfo != null)
