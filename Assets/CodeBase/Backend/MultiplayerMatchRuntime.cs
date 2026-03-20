@@ -24,6 +24,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(0.0f)] private float remoteExtrapolationLimit = 0.08f;
     [SerializeField, Min(2)] private int remoteSnapshotBufferSize = 32;
     [SerializeField, Min(0.5f)] private float remoteTeleportDistance = 12.0f;
+    [SerializeField, Min(0.01f)] private float remoteCollisionStaleTimeout = 0.18f;
+    [SerializeField, Min(0.0f)] private float remoteCollisionRecoveryDelay = 0.35f;
+    [SerializeField, Min(0.0f)] private float maxDepenetrationVelocity = 7.5f;
 
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
@@ -36,6 +39,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
     private readonly Dictionary<string, float> recentLocalPairCollisions = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
     private const float RemoteCollisionDedupeWindow = 0.35f;
+    private bool applicationHasFocus = true;
+    private float focusRecoveryUntil;
 
     private sealed class LocalWheelBinding
     {
@@ -102,8 +107,31 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
 
         float deltaTime = Mathf.Max(0.0001f, Time.deltaTime);
+        bool collisionsAllowed = applicationHasFocus && Time.unscaledTime >= focusRecoveryUntil;
         foreach (RemotePlayerProxy proxy in remotePlayers.Values)
-            proxy.Tick(Time.unscaledTimeAsDouble, deltaTime, remoteInterpolationBackTime, remoteExtrapolationLimit, remoteTeleportDistance);
+            proxy.Tick(
+                Time.unscaledTimeAsDouble,
+                deltaTime,
+                remoteInterpolationBackTime,
+                remoteExtrapolationLimit,
+                remoteTeleportDistance,
+                remoteCollisionStaleTimeout,
+                remoteCollisionRecoveryDelay,
+                collisionsAllowed);
+    }
+
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        applicationHasFocus = hasFocus;
+        focusRecoveryUntil = hasFocus ? Time.unscaledTime + remoteCollisionRecoveryDelay : float.PositiveInfinity;
+
+        foreach (RemotePlayerProxy proxy in remotePlayers.Values)
+            proxy.SetCollisionEnabled(false);
+    }
+
+    private void OnApplicationPause(bool paused)
+    {
+        OnApplicationFocus(!paused);
     }
 
     private bool IsMultiplayerActive()
@@ -191,6 +219,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         Transform root = localPlayerCar != null ? localPlayerCar.transform : transform;
         Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
+        if (body != null)
+            body.maxDepenetrationVelocity = maxDepenetrationVelocity;
 
         BackendPlayerStateSnapshot snapshot = new BackendPlayerStateSnapshot
         {
@@ -630,11 +660,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         private readonly int snapshotBufferSize;
         private readonly List<RemoteWheelBinding> wheelBindings = new List<RemoteWheelBinding>(4);
         private readonly List<RemoteSnapshot> snapshots = new List<RemoteSnapshot>(32);
+        private Collider[] bodyColliders;
         private readonly string playerId;
         private bool visualReady;
         private CarDamageController damageController;
         private DamageManager damageManager;
         private int appliedDamageRevision;
+        private double lastSnapshotLocalTime;
+        private double collisionRecoveryUntil;
+        private bool collisionEnabled;
 
         public RemotePlayerProxy(
             string playerId,
@@ -684,14 +718,34 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             List<BackendWheelPose> wheelStates)
         {
             EnsureVisual(null);
-            PushSnapshot(ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs), position, rotation, velocity, angularVelocity);
+            double snapshotTime = ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs);
+            if (lastSnapshotLocalTime > 0.0d && snapshotTime - lastSnapshotLocalTime > 0.25d)
+                collisionRecoveryUntil = snapshotTime + 0.35d;
+            lastSnapshotLocalTime = snapshotTime;
+            PushSnapshot(snapshotTime, position, rotation, velocity, angularVelocity);
             ApplyWheelStates(wheelStates);
         }
 
-        public void Tick(double localNow, float deltaTime, float interpolationBackTime, float extrapolationLimit, float teleportDistance)
+        public void Tick(
+            double localNow,
+            float deltaTime,
+            float interpolationBackTime,
+            float extrapolationLimit,
+            float teleportDistance,
+            float staleTimeout,
+            float recoveryDelay,
+            bool allowCollisions)
         {
             if (snapshots.Count == 0)
+            {
+                SetCollisionEnabled(false);
                 return;
+            }
+
+            bool freshState = lastSnapshotLocalTime > 0.0d && localNow - lastSnapshotLocalTime <= staleTimeout;
+            if (!freshState)
+                collisionRecoveryUntil = Math.Max(collisionRecoveryUntil, localNow + recoveryDelay);
+            SetCollisionEnabled(allowCollisions && freshState && localNow >= collisionRecoveryUntil);
 
             double renderTime = localNow - Mathf.Max(0.01f, interpolationBackTime);
             Vector3 desiredPosition;
@@ -704,6 +758,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 {
                     physicsBody.position = desiredPosition;
                     physicsBody.rotation = desiredRotation;
+                    collisionRecoveryUntil = Math.Max(collisionRecoveryUntil, localNow + recoveryDelay);
+                    SetCollisionEnabled(false);
                 }
                 else
                 {
@@ -870,7 +926,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             }
 
             if (visualReady && physicsBody == null)
+            {
                 physicsBody = root.GetComponent<Rigidbody>();
+                if (physicsBody != null)
+                    physicsBody.maxDepenetrationVelocity = 7.5f;
+            }
+
+            if (visualReady && bodyColliders == null)
+                bodyColliders = root.GetComponentsInChildren<Collider>(true);
 
             if (visualReady && wheelBindings.Count == 0)
                 ResolveWheelBindings();
@@ -1149,6 +1212,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             body.isKinematic = true;
             body.interpolation = RigidbodyInterpolation.Interpolate;
             body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+            body.maxDepenetrationVelocity = 7.5f;
 
             if (bodyInstance != null && bodyInstance.GetComponentsInChildren<Collider>(true).Length == 0)
             {
@@ -1212,6 +1276,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 renderers,
                 CollectRuntimeMaterials(renderers));
             damageController.EnsureNetworkTextureReady();
+        }
+
+        public void SetCollisionEnabled(bool enabled)
+        {
+            if (collisionEnabled == enabled && bodyColliders != null)
+                return;
+
+            collisionEnabled = enabled;
+            if (bodyColliders == null)
+                return;
+
+            for (int i = 0; i < bodyColliders.Length; i++)
+            {
+                Collider collider = bodyColliders[i];
+                if (collider == null)
+                    continue;
+                collider.enabled = enabled;
+            }
         }
 
         private static Renderer ResolveRuntimeTargetRenderer(GameObject runtimeBodyInstance, GameObject sourceBodyPrefab, Renderer sourceRenderer)
