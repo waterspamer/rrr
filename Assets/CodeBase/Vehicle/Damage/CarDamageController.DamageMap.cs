@@ -7,7 +7,43 @@ public partial class CarDamageController
         if (runtimeTexture == null || cpuTexture == null)
             return;
 
-        float impactSpeedMps = collision.relativeVelocity.magnitude;
+        ContactPoint[] contacts = collision.contacts;
+        Vector3 worldPoint = contacts != null && contacts.Length > 0 ? contacts[0].point : transform.position;
+        Vector3 worldNormal = contacts != null && contacts.Length > 0 ? contacts[0].normal : Vector3.up;
+        ApplyDamageFromImpact(
+            worldPoint,
+            worldNormal,
+            collision.relativeVelocity,
+            collision.impulse.magnitude,
+            collision.collider != null ? collision.collider.name : "collision",
+            true,
+            collision);
+    }
+
+    public bool ApplySyntheticCollisionDamage(
+        Vector3 worldPoint,
+        Vector3 worldNormal,
+        Vector3 relativeVelocity,
+        float impulseMagnitude,
+        string debugLabel,
+        bool notifyNetwork = true)
+    {
+        if (runtimeTexture == null || cpuTexture == null)
+            return false;
+
+        return ApplyDamageFromImpact(worldPoint, worldNormal, relativeVelocity, impulseMagnitude, debugLabel, notifyNetwork, null);
+    }
+
+    private bool ApplyDamageFromImpact(
+        Vector3 worldPoint,
+        Vector3 worldNormal,
+        Vector3 relativeVelocity,
+        float impulseMagnitude,
+        string debugLabel,
+        bool notifyNetwork,
+        Collision sourceCollision)
+    {
+        float impactSpeedMps = relativeVelocity.magnitude;
         if (impactSpeedMps <= 0.001f)
             impactSpeedMps = GetAverageSpeed();
         float impactSpeedKmh = impactSpeedMps * 3.6f;
@@ -16,10 +52,10 @@ public partial class CarDamageController
             : 1.0f;
         float curveScale = speedDamageCurve != null ? Mathf.Clamp01(speedDamageCurve.Evaluate(speed01)) : speed01;
         float speedScale = Mathf.Lerp(minDamageScale, 1.0f, curveScale);
-        float normalImpact = GetImpactNormalFactor(collision);
+        float normalImpact = GetImpactNormalFactor(relativeVelocity, worldNormal);
         float alignment = Mathf.Pow(normalImpact, Mathf.Max(0.1f, impactAlignmentPower));
         float glancingScale = Mathf.Lerp(Mathf.Clamp01(glancingDamageScale), 1.0f, alignment);
-        float effectiveImpulse = collision.impulse.magnitude;
+        float effectiveImpulse = impulseMagnitude;
         if (effectiveImpulse <= 0.001f)
         {
             Rigidbody rb = GetComponent<Rigidbody>();
@@ -30,50 +66,51 @@ public partial class CarDamageController
         float baseAmount = Mathf.Clamp(effectiveImpulse * impulseToColor, 0.0f, maxColorStep);
         float amount = baseAmount * speedScale * glancingScale;
         if (amount <= 0.0001f)
-            return;
+            return false;
 
         if (damageManager != null)
-            damageManager.SpawnCollisionEffect(collision);
-        followCarCamera?.PlayCollisionShake(collision.impulse.magnitude);
+        {
+            if (sourceCollision != null)
+                damageManager.SpawnCollisionEffect(sourceCollision);
+            else
+                damageManager.SpawnCollisionEffect(worldPoint, worldNormal);
+        }
+        followCarCamera?.PlayCollisionShake(effectiveImpulse);
 
-        Debug.Log($"CarDamageController hit {collision.collider.name} impulse={collision.impulse.magnitude:0.000} effectiveImpulse={effectiveImpulse:0.000} impactSpeed={impactSpeedKmh:0.0}km/h normalImpact={normalImpact:0.00} amount={amount:0.000}", this);
+        Debug.Log($"CarDamageController hit {debugLabel} impulse={impulseMagnitude:0.000} effectiveImpulse={effectiveImpulse:0.000} impactSpeed={impactSpeedKmh:0.0}km/h normalImpact={normalImpact:0.00} amount={amount:0.000}", this);
 
         int baseRadiusCells = Mathf.Clamp(Mathf.CeilToInt(effectiveImpulse * impulseToRadius), 0, maxRadiusCells);
         int radiusCells = Mathf.Clamp(
             Mathf.RoundToInt(baseRadiusCells * (1.0f + curveScale * speedRadiusBoost) * glancingScale),
             0,
             maxRadiusCells);
-        ContactPoint[] contacts = collision.contacts;
-        for (int i = 0; i < contacts.Length; i++)
-            ApplyDamageAtPoint(contacts[i].point, amount, radiusCells);
 
+        ApplyDamageAtPoint(worldPoint, amount, radiusCells);
         cpuTexture.Apply();
         Graphics.Blit(cpuTexture, runtimeTexture);
         ApplyComputeDeformation();
 
-        if (contacts != null && contacts.Length > 0)
-            NotifyDamageMapChanged(contacts[0].point, contacts[0].normal);
-        else
-            NotifyDamageMapChanged();
+        if (notifyNetwork)
+            NotifyDamageMapChanged(worldPoint, worldNormal);
+
+        return true;
     }
 
     private float GetImpactNormalFactor(Collision collision)
     {
-        Vector3 relativeVelocity = collision.relativeVelocity;
+        ContactPoint[] contacts = collision.contacts;
+        Vector3 normal = contacts != null && contacts.Length > 0 ? contacts[0].normal : Vector3.up;
+        return GetImpactNormalFactor(collision.relativeVelocity, normal);
+    }
+
+    private float GetImpactNormalFactor(Vector3 relativeVelocity, Vector3 worldNormal)
+    {
         float speed = relativeVelocity.magnitude;
         if (speed <= 0.0001f)
             return 1.0f;
 
-        ContactPoint[] contacts = collision.contacts;
-        if (contacts == null || contacts.Length == 0)
-            return 1.0f;
-
         Vector3 velocityDir = relativeVelocity / speed;
-        float sum = 0.0f;
-        for (int i = 0; i < contacts.Length; i++)
-            sum += Mathf.Abs(Vector3.Dot(velocityDir, contacts[i].normal));
-
-        return Mathf.Clamp01(sum / contacts.Length);
+        return Mathf.Clamp01(Mathf.Abs(Vector3.Dot(velocityDir, worldNormal.normalized)));
     }
 
     private void ApplyDamageAtPoint(Vector3 worldPoint, float amount, int radiusCells)

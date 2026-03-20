@@ -19,6 +19,7 @@ public sealed class BackendClient
     public event Action<BackendMatchInfo> MatchInfoChanged;
     public event Action<BackendMatchStateMessage> MatchStateReceived;
     public event Action<BackendDamageStateMessage> DamageStateReceived;
+    public event Action<BackendCollisionEventMessage> CollisionEventReceived;
     public event Action<BackendRealtimeErrorMessage> RealtimeErrorReceived;
     public event Action<string> RawRealtimeMessageReceived;
 
@@ -218,6 +219,11 @@ public sealed class BackendClient
         return socket.SendAsync(message);
     }
 
+    public Task SendCollisionEventAsync(BackendCollisionEventMessage message)
+    {
+        return socket.SendAsync(message);
+    }
+
     private void HandleRealtimeMessage(string json)
     {
         RawRealtimeMessageReceived?.Invoke(json);
@@ -276,6 +282,10 @@ public sealed class BackendClient
             case "damage_state":
                 BackendDamageStateMessage damage = JsonUtility.FromJson<BackendDamageStateMessage>(json);
                 DamageStateReceived?.Invoke(damage);
+                break;
+            case "collision_event":
+                BackendCollisionEventMessage collision = JsonUtility.FromJson<BackendCollisionEventMessage>(json);
+                CollisionEventReceived?.Invoke(collision);
                 break;
             case "match_finished":
                 if (CurrentMatchInfo != null)

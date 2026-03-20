@@ -34,6 +34,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private bool matchSetupRequested;
     private CarDamageController localDamageController;
     private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
+    private readonly Dictionary<string, float> recentLocalPairCollisions = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+    private const float RemoteCollisionDedupeWindow = 0.35f;
 
     private sealed class LocalWheelBinding
     {
@@ -57,6 +59,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         Backend.Client.MatchStateReceived += HandleMatchStateReceived;
         Backend.Client.DamageStateReceived -= HandleDamageStateReceived;
         Backend.Client.DamageStateReceived += HandleDamageStateReceived;
+        Backend.Client.CollisionEventReceived -= HandleCollisionEventReceived;
+        Backend.Client.CollisionEventReceived += HandleCollisionEventReceived;
 
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.MatchInfoChanged += HandleMatchInfoChanged;
@@ -72,6 +76,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     {
         Backend.Client.MatchStateReceived -= HandleMatchStateReceived;
         Backend.Client.DamageStateReceived -= HandleDamageStateReceived;
+        Backend.Client.CollisionEventReceived -= HandleCollisionEventReceived;
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.RealtimeErrorReceived -= HandleRealtimeErrorReceived;
         BindLocalDamageController(null);
@@ -257,7 +262,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return;
 
         if (localDamageController != null)
+        {
             localDamageController.DamageMapChanged -= HandleLocalDamageMapChanged;
+            localDamageController.NetworkVehicleCollisionDetected -= HandleLocalVehicleCollisionDetected;
+        }
 
         localDamageController = nextController;
         if (localDamageController != null)
@@ -265,6 +273,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             localDamageController.EnsureNetworkTextureReady();
             localDamageController.DamageMapChanged -= HandleLocalDamageMapChanged;
             localDamageController.DamageMapChanged += HandleLocalDamageMapChanged;
+            localDamageController.NetworkVehicleCollisionDetected -= HandleLocalVehicleCollisionDetected;
+            localDamageController.NetworkVehicleCollisionDetected += HandleLocalVehicleCollisionDetected;
         }
     }
 
@@ -384,6 +394,81 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         Debug.Log("MultiplayerMatchRuntime: queued damage_state revision " + message.revision + " for " + localPlayerId, this);
     }
 
+    private void HandleLocalVehicleCollisionDetected(NetworkVehicleCollisionReport report)
+    {
+        if (report == null || string.IsNullOrWhiteSpace(report.otherPlayerId) || string.IsNullOrWhiteSpace(localPlayerId))
+            return;
+
+        string pairKey = BuildPairKey(localPlayerId, report.otherPlayerId);
+        recentLocalPairCollisions[pairKey] = Time.unscaledTime;
+
+        if (!HasCollisionAuthority(localPlayerId, report.otherPlayerId))
+            return;
+
+        BackendCollisionEventMessage message = new BackendCollisionEventMessage
+        {
+            match_id = activeMatchId,
+            primary_player_id = localPlayerId,
+            secondary_player_id = report.otherPlayerId,
+            world_point = BackendVector3.FromVector3(report.worldPoint),
+            world_normal = BackendVector3.FromVector3(report.worldNormal),
+            relative_velocity = BackendVector3.FromVector3(report.relativeVelocity),
+            impulse_magnitude = report.impulseMagnitude
+        };
+
+        _ = SendCollisionEventAsync(message);
+    }
+
+    private void HandleCollisionEventReceived(BackendCollisionEventMessage message)
+    {
+        if (message == null || string.IsNullOrWhiteSpace(message.match_id))
+            return;
+        if (!string.IsNullOrWhiteSpace(activeMatchId) &&
+            !string.Equals(activeMatchId, message.match_id, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (string.IsNullOrWhiteSpace(localPlayerId))
+            return;
+
+        bool isPrimary = string.Equals(message.primary_player_id, localPlayerId, StringComparison.OrdinalIgnoreCase);
+        bool isSecondary = string.Equals(message.secondary_player_id, localPlayerId, StringComparison.OrdinalIgnoreCase);
+        if (!isPrimary && !isSecondary)
+            return;
+
+        if (isPrimary)
+            return;
+
+        string otherPlayerId = isSecondary ? message.primary_player_id : message.secondary_player_id;
+        string pairKey = BuildPairKey(localPlayerId, otherPlayerId);
+        if (recentLocalPairCollisions.TryGetValue(pairKey, out float recentTime) &&
+            Time.unscaledTime - recentTime <= RemoteCollisionDedupeWindow)
+        {
+            return;
+        }
+
+        RefreshLocalBindings();
+        if (localDamageController == null)
+            return;
+
+        Vector3 relativeVelocity = message.RelativeVelocityVector;
+        Vector3 normal = message.WorldNormalVector;
+        if (isSecondary)
+        {
+            relativeVelocity = -relativeVelocity;
+            normal = -normal;
+        }
+
+        if (localDamageController.ApplySyntheticCollisionDamage(
+                message.WorldPointVector,
+                normal,
+                relativeVelocity,
+                message.impulse_magnitude,
+                $"network collision {message.primary_player_id}->{message.secondary_player_id}",
+                notifyNetwork: true))
+        {
+            recentLocalPairCollisions[pairKey] = Time.unscaledTime;
+        }
+    }
+
     private void HandleRealtimeErrorReceived(BackendRealtimeErrorMessage error)
     {
         if (error == null || string.IsNullOrWhiteSpace(error.message))
@@ -494,6 +579,53 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
 
         return null;
+    }
+
+    private async Task SendCollisionEventAsync(BackendCollisionEventMessage message)
+    {
+        if (message == null || !IsMultiplayerActive())
+            return;
+
+        try
+        {
+            await EnsureRealtimeReadyAsync();
+            await Backend.Client.SendCollisionEventAsync(message);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("MultiplayerMatchRuntime: failed to send collision event. " + ex.Message, this);
+        }
+    }
+
+    private bool HasCollisionAuthority(string firstPlayerId, string secondPlayerId)
+    {
+        return GetAuthorityOrder(firstPlayerId) <= GetAuthorityOrder(secondPlayerId);
+    }
+
+    private int GetAuthorityOrder(string playerId)
+    {
+        BackendMatchInfo matchInfo = Backend.Client.CurrentMatchInfo;
+        if (matchInfo == null || matchInfo.players == null || string.IsNullOrWhiteSpace(playerId))
+            return int.MaxValue;
+
+        for (int i = 0; i < matchInfo.players.Count; i++)
+        {
+            BackendMatchPlayerInfo player = matchInfo.players[i];
+            if (player != null && string.Equals(player.player_id, playerId, StringComparison.OrdinalIgnoreCase))
+                return player.authority_order;
+        }
+
+        return int.MaxValue;
+    }
+
+    private static string BuildPairKey(string firstPlayerId, string secondPlayerId)
+    {
+        if (string.IsNullOrWhiteSpace(firstPlayerId) || string.IsNullOrWhiteSpace(secondPlayerId))
+            return string.Empty;
+
+        return string.Compare(firstPlayerId, secondPlayerId, StringComparison.OrdinalIgnoreCase) <= 0
+            ? firstPlayerId + "|" + secondPlayerId
+            : secondPlayerId + "|" + firstPlayerId;
     }
 
     private sealed class RemotePlayerProxy

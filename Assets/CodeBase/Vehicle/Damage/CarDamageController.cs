@@ -225,6 +225,13 @@ public partial class CarDamageController : MonoBehaviour
             return;
 
         ApplyCollisionDamage(collision);
+
+        if (TryGetNetworkVehicleEntity(collision.collider != null ? collision.collider.transform : null, out NetworkVehicleEntity vehicleEntity) &&
+            vehicleEntity != null &&
+            !vehicleEntity.IsLocalPlayer)
+        {
+            NotifyNetworkVehicleCollision(collision, vehicleEntity.PlayerId);
+        }
     }
 
     private void Start()

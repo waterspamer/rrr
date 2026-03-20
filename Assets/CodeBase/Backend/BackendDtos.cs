@@ -215,6 +215,23 @@ public sealed class BackendDamageStateMessage
 }
 
 [Serializable]
+public sealed class BackendCollisionEventMessage
+{
+    public string type = "collision_event";
+    public string match_id;
+    public string primary_player_id;
+    public string secondary_player_id;
+    public BackendVector3 world_point;
+    public BackendVector3 world_normal;
+    public BackendVector3 relative_velocity;
+    public float impulse_magnitude;
+
+    public Vector3 WorldPointVector => world_point != null ? world_point.ToVector3() : Vector3.zero;
+    public Vector3 WorldNormalVector => world_normal != null ? world_normal.ToVector3() : Vector3.up;
+    public Vector3 RelativeVelocityVector => relative_velocity != null ? relative_velocity.ToVector3() : Vector3.zero;
+}
+
+[Serializable]
 public sealed class BackendWelcomeMessage
 {
     public string type;
@@ -311,6 +328,7 @@ public sealed class BackendMatchPlayerInfo
     public string player_id;
     public string player_name;
     public string connection_state;
+    public int authority_order;
     public string spawn_point_id;
     public BackendVector3 spawn_position;
     public BackendVector3 spawn_rotation;

@@ -13,11 +13,21 @@ public sealed class CarDamageNetworkSnapshot
     public Vector3 worldNormal;
 }
 
+public sealed class NetworkVehicleCollisionReport
+{
+    public string otherPlayerId;
+    public Vector3 worldPoint;
+    public Vector3 worldNormal;
+    public Vector3 relativeVelocity;
+    public float impulseMagnitude;
+}
+
 public partial class CarDamageController
 {
     private int damageRevision;
 
     public event Action<CarDamageNetworkSnapshot> DamageMapChanged;
+    public event Action<NetworkVehicleCollisionReport> NetworkVehicleCollisionDetected;
 
     public int DamageRevision => damageRevision;
 
@@ -109,5 +119,24 @@ public partial class CarDamageController
         snapshot.hasImpactNormal = hasNormal;
         snapshot.worldNormal = worldNormal;
         DamageMapChanged?.Invoke(snapshot);
+    }
+
+    private void NotifyNetworkVehicleCollision(Collision collision, string otherPlayerId)
+    {
+        if (NetworkVehicleCollisionDetected == null || collision == null || string.IsNullOrWhiteSpace(otherPlayerId))
+            return;
+
+        ContactPoint[] contacts = collision.contacts;
+        Vector3 worldPoint = contacts != null && contacts.Length > 0 ? contacts[0].point : transform.position;
+        Vector3 worldNormal = contacts != null && contacts.Length > 0 ? contacts[0].normal : Vector3.up;
+
+        NetworkVehicleCollisionDetected.Invoke(new NetworkVehicleCollisionReport
+        {
+            otherPlayerId = otherPlayerId,
+            worldPoint = worldPoint,
+            worldNormal = worldNormal,
+            relativeVelocity = collision.relativeVelocity,
+            impulseMagnitude = collision.impulse.magnitude
+        });
     }
 }
