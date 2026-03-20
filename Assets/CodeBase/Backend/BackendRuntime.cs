@@ -37,6 +37,7 @@ public sealed class BackendRuntime : MonoBehaviour
 
         instance = this;
         DontDestroyOnLoad(gameObject);
+        Application.runInBackground = true;
     }
 
     private void Update()
