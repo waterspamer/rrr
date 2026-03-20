@@ -14,14 +14,16 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField] private NetworkPlayerSpawnManager spawnManager;
 
     [Header("Networking")]
-    [SerializeField, Min(1.0f)] private float inputSendRate = 20.0f;
+    [SerializeField, Min(1.0f)] private float inputSendRate = 30.0f;
     [SerializeField, Min(1.0f)] private float pingRate = 2.0f;
 
     [Header("Remote Players")]
     [SerializeField] private Material remoteFallbackMaterial;
     [SerializeField] private Color remoteFallbackColor = new Color(0.22f, 0.88f, 1.0f, 0.82f);
-    [SerializeField, Min(0.01f)] private float remotePositionLerp = 10.0f;
-    [SerializeField, Min(0.01f)] private float remoteRotationLerp = 10.0f;
+    [SerializeField, Min(0.01f)] private float remotePositionLerp = 18.0f;
+    [SerializeField, Min(0.01f)] private float remoteRotationLerp = 18.0f;
+    [SerializeField, Range(0.0f, 0.25f)] private float remotePredictionLead = 0.075f;
+    [SerializeField, Range(0.0f, 0.25f)] private float remotePredictionMax = 0.12f;
 
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
@@ -96,7 +98,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         float deltaTime = Mathf.Max(0.0001f, Time.deltaTime);
         foreach (RemotePlayerProxy proxy in remotePlayers.Values)
-            proxy.Tick(deltaTime, remotePositionLerp, remoteRotationLerp);
+            proxy.Tick(deltaTime, remotePositionLerp, remoteRotationLerp, remotePredictionLead, remotePredictionMax);
     }
 
     private bool IsMultiplayerActive()
@@ -507,6 +509,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         private Vector3 targetPosition;
         private Quaternion targetRotation;
         private Vector3 currentVelocity;
+        private float lastStateReceiveTime;
         private CarDamageController damageController;
         private DamageManager damageManager;
         private int appliedDamageRevision;
@@ -554,14 +557,17 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             targetPosition = position;
             targetRotation = rotation;
             currentVelocity = velocity;
+            lastStateReceiveTime = Time.unscaledTime;
             ApplyWheelStates(wheelStates);
         }
 
-        public void Tick(float deltaTime, float positionLerp, float rotationLerp)
+        public void Tick(float deltaTime, float positionLerp, float rotationLerp, float predictionLead, float predictionMax)
         {
             float positionT = 1.0f - Mathf.Exp(-Mathf.Max(0.01f, positionLerp) * deltaTime);
             float rotationT = 1.0f - Mathf.Exp(-Mathf.Max(0.01f, rotationLerp) * deltaTime);
-            transform.position = Vector3.Lerp(transform.position, targetPosition, positionT);
+            float stateAge = Mathf.Clamp(Time.unscaledTime - lastStateReceiveTime + predictionLead, 0.0f, predictionMax);
+            Vector3 predictedPosition = targetPosition + currentVelocity * stateAge;
+            transform.position = Vector3.Lerp(transform.position, predictedPosition, positionT);
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationT);
         }
 
@@ -674,7 +680,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             ApplyRemoteBodySet(loadout, bodyInstance.transform, carConfig);
             ApplyRemoteCustomizations(bodyInstance.transform, carConfig);
             EnsureRemotePhysics(parent.gameObject, bodyInstance, loadout.PlayerCarConfig);
-            EnsureRemoteDamage(parent.gameObject, bodyInstance, loadout.PlayerCarConfig);
+            EnsureRemoteDamage(parent.gameObject, bodyInstance, loadout.PlayerCarConfig, loadout.PlayerCarConfig.Visual != null ? loadout.PlayerCarConfig.Visual.bodyPrefab : null);
             EnsureNetworkEntity(parent.gameObject, playerId);
             StripGameplayComponents(bodyInstance, keepBodyColliders: true);
             ApplyRemotePaint(bodyInstance, carConfig);
@@ -931,7 +937,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             }
         }
 
-        private static void EnsureRemoteDamage(GameObject rootObject, GameObject bodyInstance, PlayerCarConfig playerConfig)
+        private static void EnsureRemoteDamage(GameObject rootObject, GameObject bodyInstance, PlayerCarConfig playerConfig, GameObject sourceBodyPrefab)
         {
             if (rootObject == null || playerConfig == null)
                 return;
@@ -945,15 +951,57 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 damageController = rootObject.AddComponent<CarDamageController>();
 
             damageController.ApplyDamageSettings(playerConfig.Damage);
+            Renderer runtimeTargetRenderer = ResolveRuntimeTargetRenderer(bodyInstance, sourceBodyPrefab, playerConfig.Damage.targetRenderer);
             Renderer[] renderers = bodyInstance != null ? bodyInstance.GetComponentsInChildren<Renderer>(true) : null;
             Material[] materials = renderers != null && renderers.Length > 0
                 ? CollectRuntimeMaterials(renderers)
                 : null;
             damageController.OverrideRuntimeTargets(
-                renderers != null && renderers.Length > 0 ? renderers[0] : null,
+                runtimeTargetRenderer,
                 renderers,
                 materials);
             damageController.InitializeFromBody(bodyInstance);
+        }
+
+        private static Renderer ResolveRuntimeTargetRenderer(GameObject runtimeBodyInstance, GameObject sourceBodyPrefab, Renderer sourceRenderer)
+        {
+            if (runtimeBodyInstance == null)
+                return null;
+            if (sourceRenderer == null || sourceBodyPrefab == null)
+                return runtimeBodyInstance.GetComponentInChildren<Renderer>(true);
+
+            string relativePath = BuildRelativePath(sourceRenderer.transform, sourceBodyPrefab.transform);
+            if (string.IsNullOrWhiteSpace(relativePath))
+                return runtimeBodyInstance.GetComponentInChildren<Renderer>(true);
+
+            Transform runtimeTarget = runtimeBodyInstance.transform.Find(relativePath);
+            if (runtimeTarget == null)
+                return runtimeBodyInstance.GetComponentInChildren<Renderer>(true);
+
+            Renderer mapped = runtimeTarget.GetComponent<Renderer>();
+            return mapped != null ? mapped : runtimeBodyInstance.GetComponentInChildren<Renderer>(true);
+        }
+
+        private static string BuildRelativePath(Transform target, Transform root)
+        {
+            if (target == null || root == null)
+                return null;
+            if (target == root)
+                return string.Empty;
+
+            List<string> parts = new List<string>();
+            Transform current = target;
+            while (current != null && current != root)
+            {
+                parts.Add(current.name);
+                current = current.parent;
+            }
+
+            if (current != root)
+                return null;
+
+            parts.Reverse();
+            return string.Join("/", parts);
         }
 
         private static Material[] CollectRuntimeMaterials(Renderer[] renderers)
