@@ -16,7 +16,7 @@ public static class WebGlBuildPipeline
     public static void BuildFromMenu()
     {
         string outputPath = Path.GetFullPath(Path.Combine(DefaultOutputRoot, DefaultBuildName));
-        ExecuteBuild(outputPath, WebGLCompressionFormat.Disabled);
+        Build(outputPath, WebGLCompressionFormat.Disabled);
     }
 
     public static void BuildFromCommandLine()
@@ -29,10 +29,10 @@ public static class WebGlBuildPipeline
             outputPath = Path.GetFullPath(Path.Combine(DefaultOutputRoot, DefaultBuildName));
 
         WebGLCompressionFormat compressionFormat = ParseCompression(compression);
-        ExecuteBuild(outputPath, compressionFormat);
+        Build(outputPath, compressionFormat);
     }
 
-    private static void ExecuteBuild(string outputPath, WebGLCompressionFormat compressionFormat)
+    public static BuildReport Build(string outputPath, WebGLCompressionFormat compressionFormat)
     {
         string[] scenes = EditorBuildSettings.scenes
             .Where(scene => scene.enabled)
@@ -67,6 +67,7 @@ public static class WebGlBuildPipeline
                 throw new InvalidOperationException($"WebGL build failed: {report.summary.result}");
 
             Debug.Log($"WebGL build completed successfully. Size: {report.summary.totalSize} bytes.");
+            return report;
         }
         finally
         {
