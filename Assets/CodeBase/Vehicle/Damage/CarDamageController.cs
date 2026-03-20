@@ -362,6 +362,9 @@ public partial class CarDamageController : MonoBehaviour
         if (col == null)
             return false;
 
+        if (TryGetNetworkVehicleEntity(col.transform, out NetworkVehicleEntity vehicleEntity))
+            return !vehicleEntity.IsLocalPlayer;
+
         if (string.IsNullOrWhiteSpace(obstacleTag))
             return true;
 
@@ -390,6 +393,21 @@ public partial class CarDamageController : MonoBehaviour
             t = t.parent;
         }
 
+        return false;
+    }
+
+    private static bool TryGetNetworkVehicleEntity(Transform node, out NetworkVehicleEntity vehicleEntity)
+    {
+        Transform current = node;
+        while (current != null)
+        {
+            vehicleEntity = current.GetComponent<NetworkVehicleEntity>();
+            if (vehicleEntity != null)
+                return true;
+            current = current.parent;
+        }
+
+        vehicleEntity = null;
         return false;
     }
 

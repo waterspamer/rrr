@@ -37,6 +37,7 @@ public class GameSceneBootstrap : MonoBehaviour
 
         ApplySelectedLoadout();
         StartCoroutine(ApplySelectedLoadoutDeferred());
+        EnsureLocalNetworkVehicleEntity();
         NotifyBackendMatchLoaded();
         EnsureMultiplayerRuntime();
     }
@@ -247,5 +248,18 @@ public class GameSceneBootstrap : MonoBehaviour
 
         if (multiplayerMatchRuntime == null)
             multiplayerMatchRuntime = gameObject.AddComponent<MultiplayerMatchRuntime>();
+    }
+
+    private void EnsureLocalNetworkVehicleEntity()
+    {
+        if (playerCar == null)
+            return;
+
+        NetworkVehicleEntity entity = playerCar.GetComponent<NetworkVehicleEntity>();
+        if (entity == null)
+            entity = playerCar.gameObject.AddComponent<NetworkVehicleEntity>();
+
+        string playerId = Backend.Client.Session != null ? Backend.Client.Session.player_id : "local_player";
+        entity.Configure(playerId, true);
     }
 }
