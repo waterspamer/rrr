@@ -34,7 +34,22 @@ if ([string]::IsNullOrWhiteSpace($ReleaseId)) {
 
 $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) ($ReleaseId + "-" + [Guid]::NewGuid().ToString("N") + ".zip")
 Write-Host "##rrr-progress|0.10|Packaging release archive"
-Compress-Archive -Path (Join-Path $ReleasePath "*") -DestinationPath $archivePath -Force
+$env:RRR_WEBGL_RELEASE_PATH = $ReleasePath
+$env:RRR_WEBGL_ARCHIVE_OUTPUT = $archivePath
+@'
+import os
+import zipfile
+
+release_path = os.environ["RRR_WEBGL_RELEASE_PATH"]
+archive_path = os.environ["RRR_WEBGL_ARCHIVE_OUTPUT"]
+
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+    for root, _, files in os.walk(release_path):
+        for file_name in files:
+            full_path = os.path.join(root, file_name)
+            relative_path = os.path.relpath(full_path, release_path).replace("\\", "/")
+            zf.write(full_path, relative_path)
+'@ | python -
 
 $env:RRR_WEBGL_HOST = $ServerHost
 $env:RRR_WEBGL_USERNAME = $Username
