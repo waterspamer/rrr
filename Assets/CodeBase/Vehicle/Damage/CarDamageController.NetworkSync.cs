@@ -72,6 +72,7 @@ public partial class CarDamageController
         cpuTexture.LoadRawTextureData(snapshot.rawBytes);
         cpuTexture.Apply(false, false);
         Graphics.Blit(cpuTexture, runtimeTexture);
+        ApplyRuntimeTextureToTargets();
 
         if (snapshot.revision > damageRevision)
             damageRevision = snapshot.revision;

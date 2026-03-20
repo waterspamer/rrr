@@ -61,9 +61,10 @@ public partial class CarDamageController
         debugVoxelScale = settings.debugVoxelScale;
     }
 
-    public void OverrideRuntimeTargets(Renderer runtimeTargetRenderer, Material[] runtimeTargetMaterials)
+    public void OverrideRuntimeTargets(Renderer runtimeTargetRenderer, Renderer[] runtimeRenderers, Material[] runtimeTargetMaterials)
     {
         targetRenderer = runtimeTargetRenderer;
+        runtimeTargetRenderers = runtimeRenderers;
         targetMaterials = runtimeTargetMaterials;
     }
 }

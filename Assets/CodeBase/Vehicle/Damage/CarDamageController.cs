@@ -9,6 +9,7 @@ public partial class CarDamageController : MonoBehaviour
     [HideInInspector, SerializeField] private RenderTexture damageTexture;
     [HideInInspector, SerializeField] private Renderer targetRenderer;
     [HideInInspector, SerializeField] private Material[] targetMaterials;
+    [System.NonSerialized] private Renderer[] runtimeTargetRenderers;
     [HideInInspector, SerializeField] private string textureProperty = "_MainTex";
     [HideInInspector, SerializeField, Min(1)] private int textureWidth = 16;
     [HideInInspector, SerializeField, Min(1)] private int textureHeight = 8;
@@ -461,9 +462,7 @@ public partial class CarDamageController : MonoBehaviour
         cpuTexture.SetPixels(pixels);
         cpuTexture.Apply();
         Graphics.Blit(cpuTexture, runtimeTexture);
-
-        if (targetRenderer != null)
-            targetRenderer.material.SetTexture(textureProperty, runtimeTexture);
+        ApplyRuntimeTextureToTargets();
     }
 
     private void ClearDamageTexture()
@@ -475,6 +474,49 @@ public partial class CarDamageController : MonoBehaviour
         cpuTexture.SetPixels(pixels);
         cpuTexture.Apply();
         Graphics.Blit(cpuTexture, runtimeTexture);
+        ApplyRuntimeTextureToTargets();
+    }
+
+    private void ApplyRuntimeTextureToTargets()
+    {
+        if (runtimeTexture == null)
+            return;
+
+        int propertyId = Shader.PropertyToID(textureProperty);
+        if (runtimeTargetRenderers != null)
+        {
+            for (int rendererIndex = 0; rendererIndex < runtimeTargetRenderers.Length; rendererIndex++)
+            {
+                Renderer renderer = runtimeTargetRenderers[rendererIndex];
+                if (renderer == null)
+                    continue;
+
+                Material[] materials = renderer.materials;
+                for (int materialIndex = 0; materialIndex < materials.Length; materialIndex++)
+                {
+                    Material material = materials[materialIndex];
+                    if (material != null && material.HasProperty(propertyId))
+                        material.SetTexture(propertyId, runtimeTexture);
+                }
+            }
+        }
+
+        if (targetRenderer != null)
+        {
+            Material material = targetRenderer.material;
+            if (material != null && material.HasProperty(propertyId))
+                material.SetTexture(propertyId, runtimeTexture);
+        }
+
+        if (targetMaterials == null)
+            return;
+
+        for (int i = 0; i < targetMaterials.Length; i++)
+        {
+            Material material = targetMaterials[i];
+            if (material != null && material.HasProperty(propertyId))
+                material.SetTexture(propertyId, runtimeTexture);
+        }
     }
 
     private void GenerateMapFromColliders(Collider[] colliders, Renderer[] renderers)

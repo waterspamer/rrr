@@ -376,6 +376,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         };
 
         _ = SendDamageStateAsync(message);
+        Debug.Log("MultiplayerMatchRuntime: queued damage_state revision " + message.revision + " for " + localPlayerId, this);
     }
 
     private void HandleRealtimeErrorReceived(BackendRealtimeErrorMessage error)
@@ -579,7 +580,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
             EnsureVisual(null);
             if (damageController == null)
+            {
+                Debug.LogWarning("MultiplayerMatchRuntime: remote damage controller missing for " + playerId, root);
                 return;
+            }
 
             byte[] rawBytes;
             try
@@ -943,15 +947,16 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             damageController.ApplyDamageSettings(playerConfig.Damage);
             Renderer[] renderers = bodyInstance != null ? bodyInstance.GetComponentsInChildren<Renderer>(true) : null;
             Material[] materials = renderers != null && renderers.Length > 0
-                ? CollectSharedMaterials(renderers)
+                ? CollectRuntimeMaterials(renderers)
                 : null;
             damageController.OverrideRuntimeTargets(
                 renderers != null && renderers.Length > 0 ? renderers[0] : null,
+                renderers,
                 materials);
             damageController.InitializeFromBody(bodyInstance);
         }
 
-        private static Material[] CollectSharedMaterials(Renderer[] renderers)
+        private static Material[] CollectRuntimeMaterials(Renderer[] renderers)
         {
             if (renderers == null || renderers.Length == 0)
                 return null;
@@ -960,12 +965,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             for (int i = 0; i < renderers.Length; i++)
             {
                 Renderer renderer = renderers[i];
-                if (renderer == null || renderer.sharedMaterials == null)
+                if (renderer == null || renderer.materials == null)
                     continue;
 
-                for (int materialIndex = 0; materialIndex < renderer.sharedMaterials.Length; materialIndex++)
+                Material[] materials = renderer.materials;
+                for (int materialIndex = 0; materialIndex < materials.Length; materialIndex++)
                 {
-                    Material material = renderer.sharedMaterials[materialIndex];
+                    Material material = materials[materialIndex];
                     if (material == null)
                         continue;
                     result.Add(material);
