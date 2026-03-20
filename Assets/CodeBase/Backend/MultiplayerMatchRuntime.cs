@@ -20,10 +20,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [Header("Remote Players")]
     [SerializeField] private Material remoteFallbackMaterial;
     [SerializeField] private Color remoteFallbackColor = new Color(0.22f, 0.88f, 1.0f, 0.82f);
-    [SerializeField, Min(0.01f)] private float remotePositionLerp = 18.0f;
-    [SerializeField, Min(0.01f)] private float remoteRotationLerp = 18.0f;
-    [SerializeField, Range(0.0f, 0.25f)] private float remotePredictionLead = 0.075f;
-    [SerializeField, Range(0.0f, 0.25f)] private float remotePredictionMax = 0.12f;
+    [SerializeField, Min(0.01f)] private float remoteInterpolationBackTime = 0.10f;
+    [SerializeField, Min(0.0f)] private float remoteExtrapolationLimit = 0.08f;
+    [SerializeField, Min(2)] private int remoteSnapshotBufferSize = 32;
+    [SerializeField, Min(0.5f)] private float remoteTeleportDistance = 12.0f;
 
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
@@ -98,7 +98,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         float deltaTime = Mathf.Max(0.0001f, Time.deltaTime);
         foreach (RemotePlayerProxy proxy in remotePlayers.Values)
-            proxy.Tick(deltaTime, remotePositionLerp, remoteRotationLerp, remotePredictionLead, remotePredictionMax);
+            proxy.Tick(Time.unscaledTimeAsDouble, deltaTime, remoteInterpolationBackTime, remoteExtrapolationLimit, remoteTeleportDistance);
     }
 
     private bool IsMultiplayerActive()
@@ -314,6 +314,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
                 RemotePlayerProxy proxy = GetOrCreateRemotePlayer(playerState);
                 proxy.SetTargetState(
+                    state.server_time,
+                    playerState.client_time,
+                    playerState.server_received_time,
                     playerState.PositionVector,
                     Quaternion.Euler(playerState.RotationVector),
                     playerState.VelocityVector,
@@ -471,6 +474,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             fallbackCarConfig,
             remoteFallbackMaterial,
             remoteFallbackColor,
+            remoteSnapshotBufferSize,
             spawnManager != null ? spawnManager.RemotePlayersRoot : null);
         remotePlayers.Add(playerId, created);
         return created;
@@ -499,17 +503,31 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             public Transform VisualRoot;
         }
 
+        private readonly struct RemoteSnapshot
+        {
+            public readonly double LocalTime;
+            public readonly Vector3 Position;
+            public readonly Quaternion Rotation;
+            public readonly Vector3 Velocity;
+
+            public RemoteSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity)
+            {
+                LocalTime = localTime;
+                Position = position;
+                Rotation = rotation;
+                Velocity = velocity;
+            }
+        }
+
         private readonly GameObject root;
         private readonly Transform transform;
         private readonly Material fallbackMaterial;
         private readonly Color fallbackColor;
+        private readonly int snapshotBufferSize;
         private readonly List<RemoteWheelBinding> wheelBindings = new List<RemoteWheelBinding>(4);
+        private readonly List<RemoteSnapshot> snapshots = new List<RemoteSnapshot>(32);
         private readonly string playerId;
         private bool visualReady;
-        private Vector3 targetPosition;
-        private Quaternion targetRotation;
-        private Vector3 currentVelocity;
-        private float lastStateReceiveTime;
         private CarDamageController damageController;
         private DamageManager damageManager;
         private int appliedDamageRevision;
@@ -521,6 +539,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             BackendCarConfigPayload fallbackCarConfig,
             Material fallbackMaterial,
             Color fallbackColor,
+            int snapshotBufferSize,
             Transform remoteRoot)
         {
             root = new GameObject("RemotePlayer_" + playerId);
@@ -530,14 +549,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             this.playerId = playerId;
             this.fallbackMaterial = fallbackMaterial;
             this.fallbackColor = fallbackColor;
-            targetRotation = Quaternion.identity;
+            this.snapshotBufferSize = Math.Max(2, snapshotBufferSize);
 
             if (matchPlayer != null && matchPlayer.HasSpawnAssignment)
             {
                 transform.position = matchPlayer.SpawnPositionVector;
                 transform.rotation = Quaternion.Euler(matchPlayer.SpawnRotationVector);
-                targetPosition = transform.position;
-                targetRotation = transform.rotation;
+                snapshots.Add(new RemoteSnapshot(Time.unscaledTimeAsDouble, transform.position, transform.rotation, Vector3.zero));
             }
 
             EnsureVisual(matchPlayer, lobbyPlayer, fallbackCarConfig);
@@ -551,24 +569,37 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             EnsureVisual(null, null, fallbackCarConfig);
         }
 
-        public void SetTargetState(Vector3 position, Quaternion rotation, Vector3 velocity, List<BackendWheelPose> wheelStates)
+        public void SetTargetState(
+            long matchServerTimeMs,
+            long clientTimeMs,
+            long serverReceivedTimeMs,
+            Vector3 position,
+            Quaternion rotation,
+            Vector3 velocity,
+            List<BackendWheelPose> wheelStates)
         {
             EnsureVisual(null);
-            targetPosition = position;
-            targetRotation = rotation;
-            currentVelocity = velocity;
-            lastStateReceiveTime = Time.unscaledTime;
+            PushSnapshot(ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs), position, rotation, velocity);
             ApplyWheelStates(wheelStates);
         }
 
-        public void Tick(float deltaTime, float positionLerp, float rotationLerp, float predictionLead, float predictionMax)
+        public void Tick(double localNow, float deltaTime, float interpolationBackTime, float extrapolationLimit, float teleportDistance)
         {
-            float positionT = 1.0f - Mathf.Exp(-Mathf.Max(0.01f, positionLerp) * deltaTime);
-            float rotationT = 1.0f - Mathf.Exp(-Mathf.Max(0.01f, rotationLerp) * deltaTime);
-            float stateAge = Mathf.Clamp(Time.unscaledTime - lastStateReceiveTime + predictionLead, 0.0f, predictionMax);
-            Vector3 predictedPosition = targetPosition + currentVelocity * stateAge;
-            transform.position = Vector3.Lerp(transform.position, predictedPosition, positionT);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationT);
+            if (snapshots.Count == 0)
+                return;
+
+            double renderTime = localNow - Mathf.Max(0.01f, interpolationBackTime);
+            Vector3 desiredPosition;
+            Quaternion desiredRotation;
+            EvaluateSnapshot(renderTime, extrapolationLimit, out desiredPosition, out desiredRotation);
+
+            if (Vector3.Distance(transform.position, desiredPosition) >= teleportDistance)
+            {
+                transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+                return;
+            }
+
+            transform.SetPositionAndRotation(desiredPosition, desiredRotation);
         }
 
         public void Dispose()
@@ -585,6 +616,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 return;
 
             EnsureVisual(null);
+            RefreshDamageBindings();
             if (damageController == null)
             {
                 Debug.LogWarning("MultiplayerMatchRuntime: remote damage controller missing for " + playerId, root);
@@ -613,6 +645,79 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 worldNormal = message.WorldNormalVector
             }, damageManager);
             appliedDamageRevision = message.revision;
+        }
+
+        private void PushSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity)
+        {
+            if (snapshots.Count > 0)
+            {
+                RemoteSnapshot newest = snapshots[snapshots.Count - 1];
+                if (localTime <= newest.LocalTime)
+                    localTime = newest.LocalTime + 0.0001d;
+            }
+
+            snapshots.Add(new RemoteSnapshot(localTime, position, rotation, velocity));
+            if (snapshots.Count > snapshotBufferSize)
+                snapshots.RemoveRange(0, snapshots.Count - snapshotBufferSize);
+        }
+
+        private static double ResolveSnapshotLocalTime(long matchServerTimeMs, long clientTimeMs, long serverReceivedTimeMs)
+        {
+            double localNow = Time.unscaledTimeAsDouble;
+            if (matchServerTimeMs <= 0)
+                return localNow;
+
+            if (serverReceivedTimeMs > 0 && matchServerTimeMs >= serverReceivedTimeMs)
+            {
+                double serverAgeSec = (matchServerTimeMs - serverReceivedTimeMs) / 1000.0d;
+                return localNow - Math.Max(0.0d, serverAgeSec);
+            }
+
+            if (clientTimeMs > 0)
+                return localNow;
+
+            return localNow;
+        }
+
+        private void EvaluateSnapshot(double renderTime, float extrapolationLimit, out Vector3 position, out Quaternion rotation)
+        {
+            if (snapshots.Count == 1)
+            {
+                RemoteSnapshot only = snapshots[0];
+                double dt = Math.Min(Math.Max(0.0d, renderTime - only.LocalTime), extrapolationLimit);
+                position = only.Position + only.Velocity * (float)dt;
+                rotation = only.Rotation;
+                return;
+            }
+
+            while (snapshots.Count >= 2 && snapshots[1].LocalTime <= renderTime - 0.5d)
+                snapshots.RemoveAt(0);
+
+            RemoteSnapshot oldest = snapshots[0];
+            if (renderTime <= oldest.LocalTime)
+            {
+                position = oldest.Position;
+                rotation = oldest.Rotation;
+                return;
+            }
+
+            for (int i = 0; i < snapshots.Count - 1; i++)
+            {
+                RemoteSnapshot from = snapshots[i];
+                RemoteSnapshot to = snapshots[i + 1];
+                if (renderTime > to.LocalTime)
+                    continue;
+
+                float t = (float)((renderTime - from.LocalTime) / Math.Max(0.0001d, to.LocalTime - from.LocalTime));
+                position = Vector3.LerpUnclamped(from.Position, to.Position, t);
+                rotation = Quaternion.SlerpUnclamped(from.Rotation, to.Rotation, t);
+                return;
+            }
+
+            RemoteSnapshot latest = snapshots[snapshots.Count - 1];
+            double extrapolation = Math.Min(Math.Max(0.0d, renderTime - latest.LocalTime), extrapolationLimit);
+            position = latest.Position + latest.Velocity * (float)extrapolation;
+            rotation = latest.Rotation;
         }
 
         private void EnsureVisual(BackendMatchPlayerInfo matchPlayer, BackendLobbyPlayer lobbyPlayer, BackendCarConfigPayload fallbackCarConfig)
@@ -961,6 +1066,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 renderers,
                 materials);
             damageController.InitializeFromBody(bodyInstance);
+        }
+
+        private void RefreshDamageBindings()
+        {
+            if (damageController == null)
+                return;
+
+            Transform body = transform.Find("Body");
+            GameObject bodyObject = body != null ? body.gameObject : root;
+            Renderer[] renderers = bodyObject.GetComponentsInChildren<Renderer>(true);
+            if (renderers == null || renderers.Length == 0)
+                return;
+
+            damageController.OverrideRuntimeTargets(
+                renderers[0],
+                renderers,
+                CollectRuntimeMaterials(renderers));
+            damageController.EnsureNetworkTextureReady();
         }
 
         private static Renderer ResolveRuntimeTargetRenderer(GameObject runtimeBodyInstance, GameObject sourceBodyPrefab, Renderer sourceRenderer)

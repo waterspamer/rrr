@@ -5,6 +5,9 @@ using UnityEngine.Rendering;
 public partial class CarDamageController : MonoBehaviour
 {
     private static bool webGlComputeWarningShown;
+    private static readonly int MainTexPropertyId = Shader.PropertyToID("_MainTex");
+    private static readonly int BaseMapPropertyId = Shader.PropertyToID("_BaseMap");
+    private static readonly int BaseColorMapPropertyId = Shader.PropertyToID("_BaseColorMap");
     [Header("Texture")]
     [HideInInspector, SerializeField] private RenderTexture damageTexture;
     [HideInInspector, SerializeField] private Renderer targetRenderer;
@@ -495,8 +498,7 @@ public partial class CarDamageController : MonoBehaviour
                 for (int materialIndex = 0; materialIndex < materials.Length; materialIndex++)
                 {
                     Material material = materials[materialIndex];
-                    if (material != null && material.HasProperty(propertyId))
-                        material.SetTexture(propertyId, runtimeTexture);
+                    ApplyRuntimeTextureToMaterial(material, propertyId);
                 }
             }
         }
@@ -504,8 +506,7 @@ public partial class CarDamageController : MonoBehaviour
         if (targetRenderer != null)
         {
             Material material = targetRenderer.material;
-            if (material != null && material.HasProperty(propertyId))
-                material.SetTexture(propertyId, runtimeTexture);
+            ApplyRuntimeTextureToMaterial(material, propertyId);
         }
 
         if (targetMaterials == null)
@@ -514,9 +515,35 @@ public partial class CarDamageController : MonoBehaviour
         for (int i = 0; i < targetMaterials.Length; i++)
         {
             Material material = targetMaterials[i];
-            if (material != null && material.HasProperty(propertyId))
-                material.SetTexture(propertyId, runtimeTexture);
+            ApplyRuntimeTextureToMaterial(material, propertyId);
         }
+    }
+
+    private void ApplyRuntimeTextureToMaterial(Material material, int primaryPropertyId)
+    {
+        if (material == null || runtimeTexture == null)
+            return;
+
+        if (material.HasProperty(primaryPropertyId))
+        {
+            material.SetTexture(primaryPropertyId, runtimeTexture);
+            return;
+        }
+
+        if (primaryPropertyId != MainTexPropertyId && material.HasProperty(MainTexPropertyId))
+        {
+            material.SetTexture(MainTexPropertyId, runtimeTexture);
+            return;
+        }
+
+        if (primaryPropertyId != BaseMapPropertyId && material.HasProperty(BaseMapPropertyId))
+        {
+            material.SetTexture(BaseMapPropertyId, runtimeTexture);
+            return;
+        }
+
+        if (primaryPropertyId != BaseColorMapPropertyId && material.HasProperty(BaseColorMapPropertyId))
+            material.SetTexture(BaseColorMapPropertyId, runtimeTexture);
     }
 
     private void GenerateMapFromColliders(Collider[] colliders, Renderer[] renderers)

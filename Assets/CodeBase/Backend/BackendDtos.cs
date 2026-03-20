@@ -325,6 +325,8 @@ public sealed class BackendMatchPlayerInfo
 public sealed class BackendMatchPlayerState
 {
     public string player_id;
+    public long client_time;
+    public long server_received_time;
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;
