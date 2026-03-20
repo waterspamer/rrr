@@ -50,6 +50,11 @@ public partial class CarDamageController
         cpuTexture.Apply();
         Graphics.Blit(cpuTexture, runtimeTexture);
         ApplyComputeDeformation();
+
+        if (contacts != null && contacts.Length > 0)
+            NotifyDamageMapChanged(contacts[0].point, contacts[0].normal);
+        else
+            NotifyDamageMapChanged();
     }
 
     private float GetImpactNormalFactor(Collision collision)

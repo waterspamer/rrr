@@ -30,6 +30,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private string localPlayerId;
     private string activeMatchId;
     private bool matchSetupRequested;
+    private CarDamageController localDamageController;
+    private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
+
+    private sealed class LocalWheelBinding
+    {
+        public WheelCollider Collider;
+        public Transform VisualRoot;
+    }
 
     private void Awake()
     {
@@ -45,6 +53,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     {
         Backend.Client.MatchStateReceived -= HandleMatchStateReceived;
         Backend.Client.MatchStateReceived += HandleMatchStateReceived;
+        Backend.Client.DamageStateReceived -= HandleDamageStateReceived;
+        Backend.Client.DamageStateReceived += HandleDamageStateReceived;
 
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.MatchInfoChanged += HandleMatchInfoChanged;
@@ -52,14 +62,17 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         Backend.Client.RealtimeErrorReceived -= HandleRealtimeErrorReceived;
         Backend.Client.RealtimeErrorReceived += HandleRealtimeErrorReceived;
 
+        RefreshLocalBindings();
         await EnsureRealtimeReadyAsync();
     }
 
     private void OnDisable()
     {
         Backend.Client.MatchStateReceived -= HandleMatchStateReceived;
+        Backend.Client.DamageStateReceived -= HandleDamageStateReceived;
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.RealtimeErrorReceived -= HandleRealtimeErrorReceived;
+        BindLocalDamageController(null);
     }
 
     private void Update()
@@ -147,20 +160,124 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
+    private async Task SendDamageStateAsync(BackendDamageStateMessage message)
+    {
+        if (message == null || !IsMultiplayerActive())
+            return;
+
+        try
+        {
+            await EnsureRealtimeReadyAsync();
+            await Backend.Client.SendDamageStateAsync(message);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("MultiplayerMatchRuntime: failed to send damage state. " + ex.Message, this);
+        }
+    }
+
     private BackendPlayerStateSnapshot CaptureLocalState()
     {
         if (localPlayerCar == null)
             localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        RefreshLocalBindings();
 
         Transform root = localPlayerCar != null ? localPlayerCar.transform : transform;
         Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
 
-        return new BackendPlayerStateSnapshot
+        BackendPlayerStateSnapshot snapshot = new BackendPlayerStateSnapshot
         {
             position = BackendVector3.FromVector3(root.position),
             rotation = BackendVector3.FromVector3(root.eulerAngles),
             velocity = BackendVector3.FromVector3(body != null ? body.linearVelocity : Vector3.zero)
         };
+
+        for (int i = 0; i < localWheelBindings.Count; i++)
+        {
+            LocalWheelBinding binding = localWheelBindings[i];
+            if (binding == null || binding.Collider == null || binding.VisualRoot == null)
+                continue;
+
+            binding.Collider.GetWorldPose(out Vector3 wheelPosition, out Quaternion wheelRotation);
+            Quaternion visualRotation = wheelRotation * Quaternion.Euler(0.0f, 0.0f, 90.0f);
+            snapshot.wheel_states.Add(new BackendWheelPose
+            {
+                position = BackendVector3.FromVector3(root.InverseTransformPoint(wheelPosition)),
+                rotation = BackendVector3.FromVector3((Quaternion.Inverse(root.rotation) * visualRotation).eulerAngles)
+            });
+        }
+
+        return snapshot;
+    }
+
+    private void RefreshLocalBindings()
+    {
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+
+        CarDamageController nextDamageController = localPlayerCar != null
+            ? (localPlayerCar.DamageController != null ? localPlayerCar.DamageController : localPlayerCar.GetComponentInChildren<CarDamageController>(true))
+            : null;
+        BindLocalDamageController(nextDamageController);
+
+        WheelCollider[] colliders = localPlayerCar != null ? localPlayerCar.GetComponentsInChildren<WheelCollider>(true) : null;
+        if (colliders == null || colliders.Length == 0)
+        {
+            localWheelBindings.Clear();
+            return;
+        }
+
+        if (localWheelBindings.Count == colliders.Length)
+            return;
+
+        Array.Sort(colliders, CompareWheelColliders);
+        localWheelBindings.Clear();
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            WheelCollider collider = colliders[i];
+            if (collider == null)
+                continue;
+
+            Transform visualRoot = collider.transform.Find("VisualRoot");
+            if (visualRoot == null)
+                visualRoot = collider.transform.Find("Visual");
+            if (visualRoot == null)
+                continue;
+
+            localWheelBindings.Add(new LocalWheelBinding
+            {
+                Collider = collider,
+                VisualRoot = visualRoot
+            });
+        }
+    }
+
+    private void BindLocalDamageController(CarDamageController nextController)
+    {
+        if (ReferenceEquals(localDamageController, nextController))
+            return;
+
+        if (localDamageController != null)
+            localDamageController.DamageMapChanged -= HandleLocalDamageMapChanged;
+
+        localDamageController = nextController;
+        if (localDamageController != null)
+        {
+            localDamageController.EnsureNetworkTextureReady();
+            localDamageController.DamageMapChanged -= HandleLocalDamageMapChanged;
+            localDamageController.DamageMapChanged += HandleLocalDamageMapChanged;
+        }
+    }
+
+    private static int CompareWheelColliders(WheelCollider left, WheelCollider right)
+    {
+        if (left == null || right == null)
+            return 0;
+
+        Vector3 leftLocal = left.transform.localPosition;
+        Vector3 rightLocal = right.transform.localPosition;
+        int zCompare = rightLocal.z.CompareTo(leftLocal.z);
+        return zCompare != 0 ? zCompare : leftLocal.x.CompareTo(rightLocal.x);
     }
 
     private void HandleMatchInfoChanged(BackendMatchInfo matchInfo)
@@ -201,7 +318,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     playerState.PositionVector,
                     Quaternion.Euler(playerState.RotationVector),
                     playerState.VelocityVector,
-                    playerState.car_config);
+                    playerState.wheel_states);
             }
         }
 
@@ -228,6 +345,40 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             proxy.Dispose();
             remotePlayers.Remove(playerId);
         }
+    }
+
+    private void HandleDamageStateReceived(BackendDamageStateMessage message)
+    {
+        if (message == null || string.IsNullOrWhiteSpace(message.match_id) || string.IsNullOrWhiteSpace(message.player_id))
+            return;
+        if (!string.IsNullOrWhiteSpace(activeMatchId) &&
+            !string.Equals(activeMatchId, message.match_id, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (string.Equals(message.player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        RemotePlayerProxy proxy = GetOrCreateRemotePlayer(message.player_id);
+        proxy?.ApplyDamage(message);
+    }
+
+    private void HandleLocalDamageMapChanged(CarDamageNetworkSnapshot snapshot)
+    {
+        if (!IsMultiplayerActive() || snapshot == null || snapshot.rawBytes == null || snapshot.rawBytes.Length == 0)
+            return;
+
+        BackendDamageStateMessage message = new BackendDamageStateMessage
+        {
+            match_id = activeMatchId,
+            player_id = localPlayerId,
+            revision = snapshot.revision,
+            width = snapshot.width,
+            height = snapshot.height,
+            map_b64 = Convert.ToBase64String(snapshot.rawBytes),
+            world_point = snapshot.hasImpactPoint ? BackendVector3.FromVector3(snapshot.worldPoint) : null,
+            world_normal = snapshot.hasImpactNormal ? BackendVector3.FromVector3(snapshot.worldNormal) : null
+        };
+
+        _ = SendDamageStateAsync(message);
     }
 
     private void HandleRealtimeErrorReceived(BackendRealtimeErrorMessage error)
@@ -299,7 +450,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (playerState == null)
             return null;
 
-        return GetOrCreateRemotePlayer(playerState.player_id, playerState.car_config);
+        BackendMatchPlayerInfo matchPlayer = spawnManager != null ? spawnManager.FindPlayer(playerState.player_id) : null;
+        return GetOrCreateRemotePlayer(playerState.player_id, matchPlayer != null ? matchPlayer.car_config : null);
     }
 
     private RemotePlayerProxy GetOrCreateRemotePlayer(string playerId, BackendCarConfigPayload fallbackCarConfig = null)
@@ -342,14 +494,23 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
     private sealed class RemotePlayerProxy
     {
+        private sealed class RemoteWheelBinding
+        {
+            public Transform VisualRoot;
+        }
+
         private readonly GameObject root;
         private readonly Transform transform;
         private readonly Material fallbackMaterial;
         private readonly Color fallbackColor;
+        private readonly List<RemoteWheelBinding> wheelBindings = new List<RemoteWheelBinding>(4);
         private bool visualReady;
         private Vector3 targetPosition;
         private Quaternion targetRotation;
         private Vector3 currentVelocity;
+        private CarDamageController damageController;
+        private DamageManager damageManager;
+        private int appliedDamageRevision;
 
         public RemotePlayerProxy(
             string playerId,
@@ -387,12 +548,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             EnsureVisual(null, null, fallbackCarConfig);
         }
 
-        public void SetTargetState(Vector3 position, Quaternion rotation, Vector3 velocity, BackendCarConfigPayload fallbackCarConfig)
+        public void SetTargetState(Vector3 position, Quaternion rotation, Vector3 velocity, List<BackendWheelPose> wheelStates)
         {
-            EnsureVisual(fallbackCarConfig);
+            EnsureVisual(null);
             targetPosition = position;
             targetRotation = rotation;
             currentVelocity = velocity;
+            ApplyWheelStates(wheelStates);
         }
 
         public void Tick(float deltaTime, float positionLerp, float rotationLerp)
@@ -407,6 +569,41 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             if (root != null)
                 UnityEngine.Object.Destroy(root);
+        }
+
+        public void ApplyDamage(BackendDamageStateMessage message)
+        {
+            if (message == null || string.IsNullOrWhiteSpace(message.map_b64))
+                return;
+            if (message.revision <= appliedDamageRevision)
+                return;
+
+            EnsureVisual(null);
+            if (damageController == null)
+                return;
+
+            byte[] rawBytes;
+            try
+            {
+                rawBytes = Convert.FromBase64String(message.map_b64);
+            }
+            catch
+            {
+                return;
+            }
+
+            damageController.ApplyNetworkDamageSnapshot(new CarDamageNetworkSnapshot
+            {
+                revision = message.revision,
+                width = message.width,
+                height = message.height,
+                rawBytes = rawBytes,
+                hasImpactPoint = message.world_point != null,
+                worldPoint = message.WorldPointVector,
+                hasImpactNormal = message.world_normal != null,
+                worldNormal = message.WorldNormalVector
+            }, damageManager);
+            appliedDamageRevision = message.revision;
         }
 
         private void EnsureVisual(BackendMatchPlayerInfo matchPlayer, BackendLobbyPlayer lobbyPlayer, BackendCarConfigPayload fallbackCarConfig)
@@ -424,6 +621,17 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 CreateFallbackVisual(root.transform, fallbackMaterial, fallbackColor);
                 visualReady = true;
             }
+
+            if (visualReady && damageController == null)
+            {
+                damageController = root.GetComponentInChildren<CarDamageController>(true);
+                damageManager = root.GetComponentInChildren<DamageManager>(true);
+                if (damageController != null)
+                    damageController.EnsureNetworkTextureReady();
+            }
+
+            if (visualReady && wheelBindings.Count == 0)
+                ResolveWheelBindings();
         }
 
         private static bool TryCreateVisualFromMatchConfig(Transform parent, BackendMatchPlayerInfo matchPlayer)
@@ -464,7 +672,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             ApplyRemoteCustomizations(bodyInstance.transform, carConfig);
             StripGameplayComponents(bodyInstance);
             ApplyRemotePaint(bodyInstance, carConfig);
-            AttachRemoteWheels(parent, loadout, carConfig);
+            AttachRemoteWheels(parent, loadout, carConfig, null);
             return true;
         }
 
@@ -513,7 +721,25 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             CarCustomizationUtility.ApplySelections(bodyRoot, selections);
         }
 
-        private static void AttachRemoteWheels(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig)
+        private void ApplyWheelStates(List<BackendWheelPose> wheelStates)
+        {
+            if (wheelStates == null || wheelStates.Count == 0 || wheelBindings.Count == 0)
+                return;
+
+            int count = Mathf.Min(wheelBindings.Count, wheelStates.Count);
+            for (int i = 0; i < count; i++)
+            {
+                RemoteWheelBinding binding = wheelBindings[i];
+                BackendWheelPose pose = wheelStates[i];
+                if (binding == null || binding.VisualRoot == null || pose == null)
+                    continue;
+
+                binding.VisualRoot.localPosition = pose.position != null ? pose.position.ToVector3() : binding.VisualRoot.localPosition;
+                binding.VisualRoot.localRotation = pose.rotation != null ? Quaternion.Euler(pose.rotation.ToVector3()) : binding.VisualRoot.localRotation;
+            }
+        }
+
+        private static void AttachRemoteWheels(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig, List<RemoteWheelBinding> wheelBindings)
         {
             if (parent == null || loadout == null || loadout.PlayerCarConfig == null || loadout.PlayerCarConfig.Visual == null)
                 return;
@@ -532,10 +758,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             float frontZ = visual.zOffset + halfWheelBase;
             float rearZ = visual.zOffset - halfWheelBase;
 
-            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontLeft", new Vector3(-halfAxle, wheelHeight, frontZ), false);
-            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontRight", new Vector3(halfAxle, wheelHeight, frontZ), true);
-            CreateRemoteWheel(parent, visual.wheelPrefab, "RearLeft", new Vector3(-halfAxle, wheelHeight, rearZ), false);
-            CreateRemoteWheel(parent, visual.wheelPrefab, "RearRight", new Vector3(halfAxle, wheelHeight, rearZ), true);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontLeft", new Vector3(-halfAxle, wheelHeight, frontZ), false, wheelBindings);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontRight", new Vector3(halfAxle, wheelHeight, frontZ), true, wheelBindings);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "RearLeft", new Vector3(-halfAxle, wheelHeight, rearZ), false, wheelBindings);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "RearRight", new Vector3(halfAxle, wheelHeight, rearZ), true, wheelBindings);
         }
 
         private static SuspensionConfig GetSuspensionConfig(CarLoadoutConfig loadout, BackendCarConfigPayload carConfig)
@@ -548,7 +774,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return loadout.SuspensionConfigs[index];
         }
 
-        private static void CreateRemoteWheel(Transform parent, GameObject wheelPrefab, string name, Vector3 localPosition, bool mirrorRightSide)
+        private static void CreateRemoteWheel(Transform parent, GameObject wheelPrefab, string name, Vector3 localPosition, bool mirrorRightSide, List<RemoteWheelBinding> wheelBindings)
         {
             GameObject wheelRoot = new GameObject(name);
             wheelRoot.transform.SetParent(parent, false);
@@ -556,7 +782,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             wheelRoot.transform.localRotation = Quaternion.identity;
             wheelRoot.transform.localScale = Vector3.one;
 
-            GameObject wheelInstance = UnityEngine.Object.Instantiate(wheelPrefab, wheelRoot.transform);
+            GameObject visualRoot = new GameObject("VisualRoot");
+            visualRoot.transform.SetParent(wheelRoot.transform, false);
+            visualRoot.transform.localPosition = Vector3.zero;
+            visualRoot.transform.localRotation = Quaternion.identity;
+            visualRoot.transform.localScale = Vector3.one;
+
+            GameObject wheelInstance = UnityEngine.Object.Instantiate(wheelPrefab, visualRoot.transform);
             wheelInstance.name = "WheelMesh";
             wheelInstance.transform.localPosition = Vector3.zero;
             wheelInstance.transform.localRotation = mirrorRightSide
@@ -564,6 +796,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 : Quaternion.identity;
             wheelInstance.transform.localScale = Vector3.one;
             StripGameplayComponents(wheelInstance);
+            if (wheelBindings != null)
+                wheelBindings.Add(new RemoteWheelBinding { VisualRoot = visualRoot.transform });
         }
 
         private static void ApplyRemotePaint(GameObject bodyInstance, BackendCarConfigPayload carConfig)
@@ -602,6 +836,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             CarControllerBase[] controllers = root.GetComponentsInChildren<CarControllerBase>(true);
             for (int i = 0; i < controllers.Length; i++)
                 UnityEngine.Object.Destroy(controllers[i]);
+        }
+
+        private void ResolveWheelBindings()
+        {
+            wheelBindings.Clear();
+            string[] names = { "FrontLeft", "FrontRight", "RearLeft", "RearRight" };
+            for (int i = 0; i < names.Length; i++)
+            {
+                Transform wheelRoot = transform.Find(names[i]);
+                if (wheelRoot == null)
+                    continue;
+
+                Transform visualRoot = wheelRoot.Find("VisualRoot");
+                if (visualRoot == null)
+                    continue;
+
+                wheelBindings.Add(new RemoteWheelBinding { VisualRoot = visualRoot });
+            }
         }
 
         private static void CreateFallbackVisual(Transform parent, Material fallbackMaterial, Color fallbackColor)

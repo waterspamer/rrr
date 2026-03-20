@@ -18,6 +18,7 @@ public sealed class BackendClient
     public event Action<BackendLobbyDetails> LobbyChanged;
     public event Action<BackendMatchInfo> MatchInfoChanged;
     public event Action<BackendMatchStateMessage> MatchStateReceived;
+    public event Action<BackendDamageStateMessage> DamageStateReceived;
     public event Action<BackendRealtimeErrorMessage> RealtimeErrorReceived;
     public event Action<string> RawRealtimeMessageReceived;
 
@@ -212,6 +213,11 @@ public sealed class BackendClient
         return socket.SendAsync(message);
     }
 
+    public Task SendDamageStateAsync(BackendDamageStateMessage message)
+    {
+        return socket.SendAsync(message);
+    }
+
     private void HandleRealtimeMessage(string json)
     {
         RawRealtimeMessageReceived?.Invoke(json);
@@ -266,6 +272,10 @@ public sealed class BackendClient
                 LatestMatchState = JsonUtility.FromJson<BackendMatchStateMessage>(json);
                 MergeMatchPlayersFromState(LatestMatchState);
                 MatchStateReceived?.Invoke(LatestMatchState);
+                break;
+            case "damage_state":
+                BackendDamageStateMessage damage = JsonUtility.FromJson<BackendDamageStateMessage>(json);
+                DamageStateReceived?.Invoke(damage);
                 break;
             case "match_finished":
                 if (CurrentMatchInfo != null)
@@ -386,9 +396,7 @@ public sealed class BackendClient
             if (playerState == null || string.IsNullOrWhiteSpace(playerState.player_id))
                 continue;
 
-            BackendMatchPlayerInfo info = FindOrCreateMatchPlayer(playerState.player_id);
-            if (playerState.car_config != null)
-                info.car_config = playerState.car_config;
+            FindOrCreateMatchPlayer(playerState.player_id);
         }
     }
 

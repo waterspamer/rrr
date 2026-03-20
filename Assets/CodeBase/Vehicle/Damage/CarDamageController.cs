@@ -208,6 +208,8 @@ public partial class CarDamageController : MonoBehaviour
         {
             ResetVertexColorsAlphaOne();
         }
+
+        NotifyDamageMapChanged();
     }
 
     private void OnCollisionEnter(Collision collision)

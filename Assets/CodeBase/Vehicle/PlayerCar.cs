@@ -22,6 +22,8 @@ public class PlayerCar : MonoBehaviour
     private bool paintPending;
 
     public PlayerCarConfig Config => config;
+    public CarControllerBase Controller => controller;
+    public CarDamageController DamageController => damageController;
 
     public void SetInitialLoadout(PlayerCarConfig carConfig, VehicleSettings handling, EngineGearboxConfig engineConfig, SuspensionConfig suspension)
     {

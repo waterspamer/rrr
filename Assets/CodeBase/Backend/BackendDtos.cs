@@ -187,6 +187,31 @@ public sealed class BackendPlayerStateSnapshot
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;
+    public List<BackendWheelPose> wheel_states = new List<BackendWheelPose>();
+}
+
+[Serializable]
+public sealed class BackendWheelPose
+{
+    public BackendVector3 position;
+    public BackendVector3 rotation;
+}
+
+[Serializable]
+public sealed class BackendDamageStateMessage
+{
+    public string type = "damage_state";
+    public string match_id;
+    public string player_id;
+    public int revision;
+    public int width;
+    public int height;
+    public string map_b64;
+    public BackendVector3 world_point;
+    public BackendVector3 world_normal;
+
+    public Vector3 WorldPointVector => world_point != null ? world_point.ToVector3() : Vector3.zero;
+    public Vector3 WorldNormalVector => world_normal != null ? world_normal.ToVector3() : Vector3.up;
 }
 
 [Serializable]
@@ -303,7 +328,7 @@ public sealed class BackendMatchPlayerState
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;
-    public BackendCarConfigPayload car_config;
+    public List<BackendWheelPose> wheel_states = new List<BackendWheelPose>();
 
     public Vector3 PositionVector => position != null ? position.ToVector3() : Vector3.zero;
     public Vector3 RotationVector => rotation != null ? rotation.ToVector3() : Vector3.zero;
