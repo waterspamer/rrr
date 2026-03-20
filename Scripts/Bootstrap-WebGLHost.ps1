@@ -52,8 +52,8 @@ block = textwrap.dedent(f"""
         try_files $uri $uri/ /index.html;
     }}
 
-    location ~* ^/play/.*\\.wasm$ {{
-        alias {remote_root}/current/;
+    location ~* ^/play/(?P<wasm_path>.*\\.wasm)$ {{
+        alias {remote_root}/current/$wasm_path;
         gzip_static on;
         brotli_static on;
         default_type application/wasm;
@@ -61,8 +61,8 @@ block = textwrap.dedent(f"""
         add_header Vary "Accept-Encoding" always;
     }}
 
-    location ~* ^/play/.*\\.(data|symbols\\.json|js|loader\\.js|framework\\.js)$ {{
-        alias {remote_root}/current/;
+    location ~* ^/play/(?P<asset_path>.*\\.(data|symbols\\.json|js))$ {{
+        alias {remote_root}/current/$asset_path;
         gzip_static on;
         brotli_static on;
         add_header Cache-Control "public, max-age=31536000, immutable";

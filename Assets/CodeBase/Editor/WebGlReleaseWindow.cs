@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEditor;
@@ -28,7 +30,20 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private string lastReleasePath;
     private string lastReleaseId;
     private Vector2 scrollPosition;
+    private Vector2 logScrollPosition;
     private WebGlReleaseConfig config;
+    private Process deployProcess;
+    private readonly List<string> deployLogLines = new List<string>();
+    private string currentStage = "Idle";
+    private float currentStageProgress;
+    private bool isDeployRunning;
+    private string pendingDialogMessage;
+    private bool pendingDialogIsError;
+    private Action queuedOperation;
+    private string queuedOperationName;
+    private DateTime operationStartedAtUtc;
+    private string activeReleaseId;
+    private string activeReleasePath;
 
     [MenuItem(MenuPath)]
     public static void OpenWindow()
@@ -42,10 +57,12 @@ public sealed class WebGlReleaseWindow : EditorWindow
     {
         config = LoadConfig();
         ApplyConfig(config);
+        EditorApplication.update += OnEditorUpdate;
     }
 
     private void OnDisable()
     {
+        EditorApplication.update -= OnEditorUpdate;
         SaveConfig();
     }
 
@@ -71,24 +88,38 @@ public sealed class WebGlReleaseWindow : EditorWindow
 
         EditorGUILayout.Space(8f);
         DrawLastReleaseInfo();
+        DrawOperationStatus();
 
         EditorGUILayout.Space(12f);
+        using (new EditorGUI.DisabledScope(isDeployRunning))
         using (new EditorGUILayout.HorizontalScope())
         {
             if (GUILayout.Button("Build WebGL", GUILayout.Height(36f)))
-                BuildOnly();
+                QueueOperation("Build WebGL", BuildOnly);
 
             using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(password)))
             {
                 if (GUILayout.Button("Build + Deploy", GUILayout.Height(36f)))
-                    BuildAndDeploy();
+                    QueueOperation("Build + Deploy", BuildAndDeploy);
             }
         }
 
-        using (new EditorGUI.DisabledScope(!CanDeployLastRelease()))
+        using (new EditorGUI.DisabledScope(!CanDeployLastRelease() || isDeployRunning))
         {
             if (GUILayout.Button("Deploy Last Build", GUILayout.Height(30f)))
-                DeployLastBuild();
+                QueueOperation("Deploy Last Build", DeployLastBuild);
+        }
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(lastReleasePath) || !Directory.Exists(lastReleasePath)))
+            {
+                if (GUILayout.Button("Reveal Last Build"))
+                    EditorUtility.RevealInFinder(lastReleasePath);
+            }
+
+            if (GUILayout.Button("Open Site"))
+                Application.OpenURL(DefaultPublicUrl);
         }
 
         EditorGUILayout.Space(12f);
@@ -114,6 +145,41 @@ public sealed class WebGlReleaseWindow : EditorWindow
         EditorGUILayout.SelectableLabel(DefaultPublicUrl, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
     }
 
+    private void DrawOperationStatus()
+    {
+        EditorGUILayout.Space(8f);
+        EditorGUILayout.LabelField("Status", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(currentStage);
+        Rect rect = GUILayoutUtility.GetRect(18f, 18f, "TextField");
+        EditorGUI.ProgressBar(rect, currentStageProgress, Mathf.RoundToInt(currentStageProgress * 100f) + "%");
+
+        if (operationStartedAtUtc != default)
+            EditorGUILayout.LabelField("Elapsed", FormatElapsed(DateTime.UtcNow - operationStartedAtUtc));
+
+        if (!string.IsNullOrWhiteSpace(activeReleaseId))
+            EditorGUILayout.LabelField("Release ID", activeReleaseId);
+
+        if (!string.IsNullOrWhiteSpace(activeReleasePath))
+        {
+            EditorGUILayout.LabelField("Release Path");
+            EditorGUILayout.SelectableLabel(activeReleasePath, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight * 2f));
+        }
+
+        EditorGUILayout.HelpBox(
+            "Pipeline: 1) Build WebGL player  2) Write release.json  3) Package zip  4) Upload to server  5) Extract release  6) Activate current symlink  7) Open site",
+            MessageType.None);
+
+        if (deployLogLines.Count > 0)
+        {
+            EditorGUILayout.Space(6f);
+            EditorGUILayout.LabelField("Recent Log", EditorStyles.boldLabel);
+            logScrollPosition = EditorGUILayout.BeginScrollView(logScrollPosition, GUILayout.Height(140f));
+            for (int i = 0; i < deployLogLines.Count; i++)
+                EditorGUILayout.SelectableLabel(deployLogLines[i], EditorStyles.miniLabel, GUILayout.Height(EditorGUIUtility.singleLineHeight));
+            EditorGUILayout.EndScrollView();
+        }
+    }
+
     private bool CanDeployLastRelease()
     {
         return !string.IsNullOrWhiteSpace(password) &&
@@ -125,21 +191,20 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private void BuildOnly()
     {
         string releasePath = BuildRelease();
+        SetStage("Build complete", 1.0f);
         EditorUtility.RevealInFinder(releasePath);
-        EditorUtility.DisplayDialog(Title, $"WebGL build completed.\n\n{releasePath}", "OK");
+        QueueDialog($"WebGL build completed.\n\n{releasePath}", false);
     }
 
     private void BuildAndDeploy()
     {
         string releasePath = BuildRelease();
-        DeployRelease(releasePath, lastReleaseId);
-        EditorUtility.DisplayDialog(Title, $"WebGL build deployed.\n\n{DefaultPublicUrl}", "OK");
+        StartDeploy(releasePath, lastReleaseId);
     }
 
     private void DeployLastBuild()
     {
-        DeployRelease(lastReleasePath, lastReleaseId);
-        EditorUtility.DisplayDialog(Title, $"Existing WebGL build deployed.\n\n{DefaultPublicUrl}", "OK");
+        StartDeploy(lastReleasePath, lastReleaseId);
     }
 
     private string BuildRelease()
@@ -147,6 +212,8 @@ public sealed class WebGlReleaseWindow : EditorWindow
         SaveConfig();
         string releaseId = CreateReleaseId();
         string releasePath = Path.Combine(outputRoot, releaseId);
+        activeReleaseId = releaseId;
+        activeReleasePath = releasePath;
 
         if (Directory.Exists(releasePath))
             Directory.Delete(releasePath, recursive: true);
@@ -155,10 +222,16 @@ public sealed class WebGlReleaseWindow : EditorWindow
 
         try
         {
+            EditorUtility.DisplayProgressBar(Title, "Preparing WebGL release folder...", 0.1f);
+            SetStage("Preparing release folder", 0.1f);
             EditorUtility.DisplayProgressBar(Title, "Building WebGL player...", 0.35f);
+            SetStage("Building WebGL player", 0.35f);
             BuildReport report = WebGlBuildPipeline.Build(releasePath, compressionFormat);
+            EditorUtility.DisplayProgressBar(Title, "Writing release metadata...", 0.55f);
+            SetStage("Writing release metadata", 0.55f);
             WriteReleaseMetadata(releasePath, releaseId, report);
             RememberLastRelease(releaseId, releasePath);
+            SetStage("Build finished", 0.65f);
             return releasePath;
         }
         catch
@@ -173,7 +246,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
         }
     }
 
-    private void DeployRelease(string releasePath, string releaseId)
+    private void StartDeploy(string releasePath, string releaseId)
     {
         SaveConfig();
 
@@ -221,17 +294,16 @@ public sealed class WebGlReleaseWindow : EditorWindow
             CreateNoWindow = true
         };
 
-        using Process process = new Process { StartInfo = startInfo };
-        process.Start();
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"Deploy failed.\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}");
-
-        UnityEngine.Debug.Log(stdout);
-        Application.OpenURL(DefaultPublicUrl);
+        deployProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        deployProcess.OutputDataReceived += OnDeployOutputDataReceived;
+        deployProcess.ErrorDataReceived += OnDeployErrorDataReceived;
+        deployProcess.Start();
+        deployProcess.BeginOutputReadLine();
+        deployProcess.BeginErrorReadLine();
+        isDeployRunning = true;
+        SetStage("Starting deploy process", 0.68f);
+        AppendDeployLog($"Deploy started for {releaseId}");
+        AppendDeployLog($"Local release: {releasePath}");
     }
 
     private void WriteReleaseMetadata(string releasePath, string releaseId, BuildReport report)
@@ -365,6 +437,158 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private static string GetConfigPath()
     {
         return Path.GetFullPath(Path.Combine(Application.dataPath, "..", "UserSettings", ConfigFileName));
+    }
+
+    private void OnEditorUpdate()
+    {
+        if (queuedOperation != null)
+        {
+            Action operation = queuedOperation;
+            string operationName = queuedOperationName;
+            queuedOperation = null;
+            queuedOperationName = null;
+
+            try
+            {
+                SetStage(operationName, currentStageProgress <= 0f ? 0.02f : currentStageProgress);
+                operation.Invoke();
+            }
+            catch (Exception exception)
+            {
+                SetStage("Operation failed", currentStageProgress <= 0f ? 0.02f : currentStageProgress);
+                AppendDeployLog("ERR: " + exception.Message);
+                QueueDialog(exception.ToString(), true);
+            }
+        }
+
+        if (!isDeployRunning && string.IsNullOrWhiteSpace(pendingDialogMessage))
+            return;
+
+        Repaint();
+
+        if (deployProcess != null && deployProcess.HasExited)
+        {
+            int exitCode = deployProcess.ExitCode;
+            CleanupDeployProcess();
+
+            if (exitCode == 0)
+            {
+                SetStage("Deploy complete", 1.0f);
+                QueueDialog($"WebGL build deployed.\n\n{DefaultPublicUrl}", false);
+                Application.OpenURL(DefaultPublicUrl);
+            }
+            else
+            {
+                SetStage("Deploy failed", currentStageProgress <= 0f ? 0.7f : currentStageProgress);
+                QueueDialog("Deploy failed.\n\nCheck the Recent Log section for details.", true);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(pendingDialogMessage) && !EditorApplication.isCompiling)
+        {
+            string message = pendingDialogMessage;
+            bool isError = pendingDialogIsError;
+            pendingDialogMessage = null;
+            pendingDialogIsError = false;
+            EditorUtility.DisplayDialog(Title, message, "OK");
+            if (isError)
+                UnityEngine.Debug.LogError(message);
+        }
+    }
+
+    private void OnDeployOutputDataReceived(object sender, DataReceivedEventArgs args)
+    {
+        if (!string.IsNullOrWhiteSpace(args.Data))
+            HandleDeployLogLine(args.Data);
+    }
+
+    private void OnDeployErrorDataReceived(object sender, DataReceivedEventArgs args)
+    {
+        if (!string.IsNullOrWhiteSpace(args.Data))
+            HandleDeployLogLine("ERR: " + args.Data);
+    }
+
+    private void HandleDeployLogLine(string line)
+    {
+        const string marker = "##rrr-progress|";
+        if (line.StartsWith(marker, StringComparison.Ordinal))
+        {
+            string[] parts = line.Split('|');
+            if (parts.Length >= 3 && float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float progress))
+            {
+                SetStage(parts[2], progress);
+                return;
+            }
+        }
+
+        AppendDeployLog(line);
+    }
+
+    private void AppendDeployLog(string line)
+    {
+        if (deployLogLines.Count > 0 && string.Equals(deployLogLines[deployLogLines.Count - 1], line, StringComparison.Ordinal))
+            return;
+
+        deployLogLines.Add(line);
+        if (deployLogLines.Count > 40)
+            deployLogLines.RemoveAt(0);
+        logScrollPosition.y = float.MaxValue;
+    }
+
+    private void SetStage(string stage, float progress)
+    {
+        currentStage = stage;
+        currentStageProgress = Mathf.Clamp01(progress);
+        AppendDeployLog(stage);
+    }
+
+    private void ResetOperationState()
+    {
+        deployLogLines.Clear();
+        currentStage = "Idle";
+        currentStageProgress = 0f;
+        pendingDialogMessage = null;
+        pendingDialogIsError = false;
+        operationStartedAtUtc = DateTime.UtcNow;
+        activeReleaseId = lastReleaseId;
+        activeReleasePath = lastReleasePath;
+    }
+
+    private void CleanupDeployProcess()
+    {
+        isDeployRunning = false;
+        if (deployProcess == null)
+            return;
+
+        deployProcess.OutputDataReceived -= OnDeployOutputDataReceived;
+        deployProcess.ErrorDataReceived -= OnDeployErrorDataReceived;
+        deployProcess.Dispose();
+        deployProcess = null;
+    }
+
+    private void QueueOperation(string operationName, Action operation)
+    {
+        if (operation == null || isDeployRunning || queuedOperation != null)
+            return;
+
+        ResetOperationState();
+        queuedOperationName = "Queued: " + operationName;
+        queuedOperation = operation;
+        SetStage(queuedOperationName, 0.01f);
+    }
+
+    private void QueueDialog(string message, bool isError)
+    {
+        pendingDialogMessage = message;
+        pendingDialogIsError = isError;
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalHours >= 1.0)
+            return elapsed.ToString(@"hh\:mm\:ss");
+
+        return elapsed.ToString(@"mm\:ss");
     }
 
     private static void AppendArgument(StringBuilder builder, string value)

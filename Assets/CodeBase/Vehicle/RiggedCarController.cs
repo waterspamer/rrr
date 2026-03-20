@@ -4,6 +4,7 @@ using System.Collections.Generic;
 public class RiggedCarController : CarControllerBase
 {
     private const string WeaponTag = "Weapon";
+    private static bool webGlColliderWarningShown;
 
     [Header("Prefabs")]
     [HideInInspector, SerializeField] private GameObject bodyPrefab;
@@ -36,7 +37,7 @@ public class RiggedCarController : CarControllerBase
         bodyPrefab = settings.bodyPrefab;
         wheelPrefab = settings.wheelPrefab;
         addBodyCollider = settings.addBodyCollider;
-        generateConvexBodyColliders = settings.generateConvexBodyColliders;
+        generateConvexBodyColliders = ShouldUseConvexBodyColliders(settings.generateConvexBodyColliders);
         wheelBase = settings.wheelBase;
         axleWidth = settings.axleWidth;
         zOffset = settings.zOffset;
@@ -317,6 +318,24 @@ public class RiggedCarController : CarControllerBase
         CarDamageController damageController = GetComponent<CarDamageController>();
         if (damageController != null)
             damageController.ReinitializeFromBody(bodyInstance);
+    }
+
+    private static bool ShouldUseConvexBodyColliders(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        if (Application.platform != RuntimePlatform.WebGLPlayer)
+            return true;
+
+        if (!webGlColliderWarningShown)
+        {
+            Debug.LogWarning(
+                "RiggedCarController: convex body collider generation is disabled on WebGL to avoid slow mesh simplification and runtime rendering issues.");
+            webGlColliderWarningShown = true;
+        }
+
+        return false;
     }
 
     private static bool IsUnderTaggedTransform(Transform node, string tag)

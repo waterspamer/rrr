@@ -4,6 +4,7 @@ using UnityEngine.Rendering;
 [RequireComponent(typeof(Rigidbody))]
 public partial class CarDamageController : MonoBehaviour
 {
+    private static bool webGlComputeWarningShown;
     [Header("Texture")]
     [HideInInspector, SerializeField] private RenderTexture damageTexture;
     [HideInInspector, SerializeField] private Renderer targetRenderer;
@@ -229,6 +230,7 @@ public partial class CarDamageController : MonoBehaviour
 
     private void Awake()
     {
+        ApplyPlatformCompatibility();
         applyComputeOnInit = true;
         velocitySampleIndex = 0;
         velocitySampleFilled = 0;
@@ -237,6 +239,23 @@ public partial class CarDamageController : MonoBehaviour
             damageManager = GetComponent<DamageManager>();
         if (followCarCamera == null)
             followCarCamera = FindFirstObjectByType<FollowCarCamera>();
+    }
+
+    private void ApplyPlatformCompatibility()
+    {
+        if (deformMeshWithCompute && (Application.platform == RuntimePlatform.WebGLPlayer || !SystemInfo.supportsComputeShaders))
+        {
+            deformMeshWithCompute = false;
+            damageDeformCompute = null;
+
+            if (!webGlComputeWarningShown)
+            {
+                Debug.LogWarning(
+                    "CarDamageController: compute mesh deformation is disabled on WebGL / unsupported GPU because it is not reliable in this runtime.",
+                    this);
+                webGlComputeWarningShown = true;
+            }
+        }
     }
 
     private void FixedUpdate()

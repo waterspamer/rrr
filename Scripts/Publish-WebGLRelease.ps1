@@ -32,12 +32,8 @@ if ([string]::IsNullOrWhiteSpace($ReleaseId)) {
     $ReleaseId = Split-Path -Leaf $ReleasePath
 }
 
-$archiveRoot = Split-Path -Parent $ReleasePath
-$archivePath = Join-Path $archiveRoot ($ReleaseId + ".zip")
-if (Test-Path $archivePath) {
-    Remove-Item -Force $archivePath
-}
-
+$archivePath = Join-Path ([System.IO.Path]::GetTempPath()) ($ReleaseId + "-" + [Guid]::NewGuid().ToString("N") + ".zip")
+Write-Host "##rrr-progress|0.10|Packaging release archive"
 Compress-Archive -Path (Join-Path $ReleasePath "*") -DestinationPath $archivePath -Force
 
 $env:RRR_WEBGL_HOST = $ServerHost
@@ -48,6 +44,9 @@ $env:RRR_WEBGL_REMOTE_ROOT = $RemoteRoot
 $env:RRR_WEBGL_RELEASE_ID = $ReleaseId
 $env:RRR_WEBGL_KEEP_SERVER_RELEASES = [Math]::Max(1, $KeepServerReleases).ToString()
 
+$publishSucceeded = $false
+
+try {
 @'
 import os
 import posixpath
@@ -88,6 +87,7 @@ current_link = posixpath.join(remote_root, "current")
 
 ensure_dir(releases_root)
 ensure_dir(tmp_root)
+print("##rrr-progress|0.35|Uploading archive to server", flush=True)
 sftp.put(archive_path, remote_archive)
 sftp.close()
 
@@ -102,6 +102,7 @@ set -eu
 mkdir -p {releases_root_q} {shlex.quote(tmp_root)}
 rm -rf {remote_release_q}
 mkdir -p {remote_release_q}
+echo '##rrr-progress|0.70|Extracting release on server'
 python3 - <<'PY'
 import zipfile
 archive = {remote_archive_q!r}
@@ -110,6 +111,7 @@ with zipfile.ZipFile(archive, 'r') as zf:
     zf.extractall(target)
 PY
 rm -f {remote_archive_q}
+echo '##rrr-progress|0.90|Activating release'
 ln -sfn {remote_release_q} {current_link_q}
 find {remote_release_q} -type d -exec chmod 755 {{}} \\;
 find {remote_release_q} -type f -exec chmod 644 {{}} \\;
@@ -137,7 +139,19 @@ if exit_code != 0:
 
 client.close()
 '@ | python -
+    $publishSucceeded = $true
+}
+finally {
+    if (Test-Path $archivePath) {
+        Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
+    }
+}
 
+if (-not $publishSucceeded) {
+    throw "WebGL publish failed."
+}
+
+Write-Host "##rrr-progress|1.00|Release deployed"
 Write-Host "WebGL release deployed: $ReleaseId"
 Write-Host "Local release: $ReleasePath"
 Write-Host "Public URL: $PublicUrl"
