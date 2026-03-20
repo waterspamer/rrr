@@ -402,9 +402,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         string pairKey = BuildPairKey(localPlayerId, report.otherPlayerId);
         recentLocalPairCollisions[pairKey] = Time.unscaledTime;
 
-        if (!HasCollisionAuthority(localPlayerId, report.otherPlayerId))
-            return;
-
         BackendCollisionEventMessage message = new BackendCollisionEventMessage
         {
             match_id = activeMatchId,
@@ -429,15 +426,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (string.IsNullOrWhiteSpace(localPlayerId))
             return;
 
-        bool isPrimary = string.Equals(message.primary_player_id, localPlayerId, StringComparison.OrdinalIgnoreCase);
-        bool isSecondary = string.Equals(message.secondary_player_id, localPlayerId, StringComparison.OrdinalIgnoreCase);
-        if (!isPrimary && !isSecondary)
+        if (!string.Equals(message.primary_player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
             return;
 
-        if (isPrimary)
-            return;
-
-        string otherPlayerId = isSecondary ? message.primary_player_id : message.secondary_player_id;
+        string otherPlayerId = message.secondary_player_id;
         string pairKey = BuildPairKey(localPlayerId, otherPlayerId);
         if (recentLocalPairCollisions.TryGetValue(pairKey, out float recentTime) &&
             Time.unscaledTime - recentTime <= RemoteCollisionDedupeWindow)
@@ -451,12 +443,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         Vector3 relativeVelocity = message.RelativeVelocityVector;
         Vector3 normal = message.WorldNormalVector;
-        if (isSecondary)
-        {
-            relativeVelocity = -relativeVelocity;
-            normal = -normal;
-        }
-
         if (localDamageController.ApplySyntheticCollisionDamage(
                 message.WorldPointVector,
                 normal,
@@ -595,27 +581,6 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             Debug.LogWarning("MultiplayerMatchRuntime: failed to send collision event. " + ex.Message, this);
         }
-    }
-
-    private bool HasCollisionAuthority(string firstPlayerId, string secondPlayerId)
-    {
-        return GetAuthorityOrder(firstPlayerId) <= GetAuthorityOrder(secondPlayerId);
-    }
-
-    private int GetAuthorityOrder(string playerId)
-    {
-        BackendMatchInfo matchInfo = Backend.Client.CurrentMatchInfo;
-        if (matchInfo == null || matchInfo.players == null || string.IsNullOrWhiteSpace(playerId))
-            return int.MaxValue;
-
-        for (int i = 0; i < matchInfo.players.Count; i++)
-        {
-            BackendMatchPlayerInfo player = matchInfo.players[i];
-            if (player != null && string.Equals(player.player_id, playerId, StringComparison.OrdinalIgnoreCase))
-                return player.authority_order;
-        }
-
-        return int.MaxValue;
     }
 
     private static string BuildPairKey(string firstPlayerId, string secondPlayerId)
