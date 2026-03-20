@@ -447,32 +447,25 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             if (carConfig == null || string.IsNullOrWhiteSpace(carConfig.loadout_name))
                 return false;
 
-            CarLoadoutConfig[] loadouts = Resources.LoadAll<CarLoadoutConfig>("Vehicles");
-            for (int i = 0; i < loadouts.Length; i++)
-            {
-                CarLoadoutConfig loadout = loadouts[i];
-                if (loadout == null || loadout.PlayerCarConfig == null || loadout.PlayerCarConfig.Visual == null)
-                    continue;
-                if (!string.Equals(loadout.name, carConfig.loadout_name, StringComparison.OrdinalIgnoreCase))
-                    continue;
+            CarLoadoutConfig loadout = CarLoadoutResolver.Resolve(carConfig.ToPlayerSelectionPayload());
+            if (loadout == null || loadout.PlayerCarConfig == null || loadout.PlayerCarConfig.Visual == null)
+                return false;
 
-                GameObject bodyPrefab = loadout.PlayerCarConfig.Visual.bodyPrefab;
-                if (bodyPrefab == null)
-                    return false;
+            GameObject bodyPrefab = loadout.PlayerCarConfig.Visual.bodyPrefab;
+            if (bodyPrefab == null)
+                return false;
 
-                GameObject bodyInstance = UnityEngine.Object.Instantiate(bodyPrefab, parent);
-                bodyInstance.name = "Body";
-                bodyInstance.transform.localPosition = Vector3.zero;
-                bodyInstance.transform.localRotation = Quaternion.identity;
-                bodyInstance.transform.localScale = Vector3.one;
-                ApplyRemoteBodySet(loadout, bodyInstance.transform, carConfig);
-                ApplyRemoteCustomizations(bodyInstance.transform, carConfig);
-                StripGameplayComponents(bodyInstance);
-                ApplyRemotePaint(bodyInstance, carConfig);
-                return true;
-            }
-
-            return false;
+            GameObject bodyInstance = UnityEngine.Object.Instantiate(bodyPrefab, parent);
+            bodyInstance.name = "Body";
+            bodyInstance.transform.localPosition = Vector3.zero;
+            bodyInstance.transform.localRotation = Quaternion.identity;
+            bodyInstance.transform.localScale = Vector3.one;
+            ApplyRemoteBodySet(loadout, bodyInstance.transform, carConfig);
+            ApplyRemoteCustomizations(bodyInstance.transform, carConfig);
+            StripGameplayComponents(bodyInstance);
+            ApplyRemotePaint(bodyInstance, carConfig);
+            AttachRemoteWheels(parent, loadout, carConfig);
+            return true;
         }
 
         private static void ApplyRemoteBodySet(CarLoadoutConfig loadout, Transform bodyRoot, BackendCarConfigPayload carConfig)
@@ -518,6 +511,59 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             }
 
             CarCustomizationUtility.ApplySelections(bodyRoot, selections);
+        }
+
+        private static void AttachRemoteWheels(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig)
+        {
+            if (parent == null || loadout == null || loadout.PlayerCarConfig == null || loadout.PlayerCarConfig.Visual == null)
+                return;
+
+            PlayerCarVisualSettings visual = loadout.PlayerCarConfig.Visual;
+            if (visual.wheelPrefab == null)
+                return;
+
+            float wheelHeight = visual.wheelHeight;
+            SuspensionConfig suspension = GetSuspensionConfig(loadout, carConfig);
+            if (suspension != null && suspension.applyVisualRideHeight)
+                wheelHeight = suspension.visualWheelHeight;
+
+            float halfWheelBase = Mathf.Max(0.2f, visual.wheelBase) * 0.5f;
+            float halfAxle = Mathf.Max(0.2f, visual.axleWidth) * 0.5f;
+            float frontZ = visual.zOffset + halfWheelBase;
+            float rearZ = visual.zOffset - halfWheelBase;
+
+            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontLeft", new Vector3(-halfAxle, wheelHeight, frontZ), false);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "FrontRight", new Vector3(halfAxle, wheelHeight, frontZ), true);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "RearLeft", new Vector3(-halfAxle, wheelHeight, rearZ), false);
+            CreateRemoteWheel(parent, visual.wheelPrefab, "RearRight", new Vector3(halfAxle, wheelHeight, rearZ), true);
+        }
+
+        private static SuspensionConfig GetSuspensionConfig(CarLoadoutConfig loadout, BackendCarConfigPayload carConfig)
+        {
+            if (loadout == null || loadout.SuspensionConfigs == null || loadout.SuspensionConfigs.Count == 0)
+                return null;
+
+            int index = carConfig != null ? carConfig.suspension_index : loadout.DefaultSuspensionIndex;
+            index = Mathf.Clamp(index, 0, loadout.SuspensionConfigs.Count - 1);
+            return loadout.SuspensionConfigs[index];
+        }
+
+        private static void CreateRemoteWheel(Transform parent, GameObject wheelPrefab, string name, Vector3 localPosition, bool mirrorRightSide)
+        {
+            GameObject wheelRoot = new GameObject(name);
+            wheelRoot.transform.SetParent(parent, false);
+            wheelRoot.transform.localPosition = localPosition;
+            wheelRoot.transform.localRotation = Quaternion.identity;
+            wheelRoot.transform.localScale = Vector3.one;
+
+            GameObject wheelInstance = UnityEngine.Object.Instantiate(wheelPrefab, wheelRoot.transform);
+            wheelInstance.name = "WheelMesh";
+            wheelInstance.transform.localPosition = Vector3.zero;
+            wheelInstance.transform.localRotation = mirrorRightSide
+                ? Quaternion.Euler(0.0f, 0.0f, 180.0f)
+                : Quaternion.identity;
+            wheelInstance.transform.localScale = Vector3.one;
+            StripGameplayComponents(wheelInstance);
         }
 
         private static void ApplyRemotePaint(GameObject bodyInstance, BackendCarConfigPayload carConfig)

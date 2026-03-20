@@ -12,6 +12,7 @@ public sealed class PlayerCarSelectionPayload
     public int engineIndex = -1;
     public int suspensionIndex = -1;
     public int paintIndex = -1;
+    public string handlingName;
     public string bodySetName;
     public string engineName;
     public string suspensionName;
@@ -42,6 +43,7 @@ public sealed class PlayerCarSelectionPayload
             engineIndex = engineIndex,
             suspensionIndex = suspensionIndex,
             paintIndex = paintIndex,
+            handlingName = loadout != null && loadout.HandlingConfig != null ? loadout.HandlingConfig.name : string.Empty,
             bodySetName = bodySet != null ? bodySet.name : string.Empty,
             engineName = engine != null ? engine.name : string.Empty,
             suspensionName = suspension != null ? suspension.name : string.Empty,

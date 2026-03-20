@@ -351,6 +351,7 @@ public sealed class BackendCarConfigPayload
     public int engine_index = -1;
     public int suspension_index = -1;
     public int paint_index = -1;
+    public string handling_name;
     public string body_set_name;
     public string engine_name;
     public string suspension_name;
@@ -373,6 +374,7 @@ public sealed class BackendCarConfigPayload
             engine_index = payload.engineIndex,
             suspension_index = payload.suspensionIndex,
             paint_index = payload.paintIndex,
+            handling_name = payload.handlingName,
             body_set_name = payload.bodySetName,
             engine_name = payload.engineName,
             suspension_name = payload.suspensionName,
@@ -420,6 +422,7 @@ public sealed class BackendCarConfigPayload
             engineIndex = engine_index,
             suspensionIndex = suspension_index,
             paintIndex = paint_index,
+            handlingName = handling_name,
             bodySetName = body_set_name,
             engineName = engine_name,
             suspensionName = suspension_name,

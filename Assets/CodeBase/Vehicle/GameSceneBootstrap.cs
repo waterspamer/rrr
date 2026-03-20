@@ -62,9 +62,7 @@ public class GameSceneBootstrap : MonoBehaviour
         PlayerCarConfig carConfig = loadout != null && loadout.PlayerCarConfig != null
             ? loadout.PlayerCarConfig
             : PlayerCarSelection.SelectedCarConfig;
-        VehicleSettings handling = loadout != null && loadout.HandlingConfig != null
-            ? loadout.HandlingConfig
-            : PlayerCarSelection.SelectedHandling;
+        VehicleSettings handling = ResolveHandling(loadout, cachedPayload);
         BodySetConfig bodySet = ResolveBodySet(loadout, cachedPayload);
         EngineGearboxConfig engine = ResolveEngine(loadout, cachedPayload);
         SuspensionConfig suspension = ResolveSuspension(loadout, cachedPayload);
@@ -126,62 +124,41 @@ public class GameSceneBootstrap : MonoBehaviour
 
     private static CarLoadoutConfig ResolveLoadout(PlayerCarSelectionPayload payload)
     {
-        if (payload != null && !string.IsNullOrWhiteSpace(payload.loadoutName))
+        return CarLoadoutResolver.Resolve(payload);
+    }
+
+    private static VehicleSettings ResolveHandling(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
+    {
+        if (loadout != null && loadout.HandlingConfig != null)
         {
-            CarLoadoutConfig[] loadouts = Resources.LoadAll<CarLoadoutConfig>("Vehicles");
-            for (int i = 0; i < loadouts.Length; i++)
-            {
-                CarLoadoutConfig loadout = loadouts[i];
-                if (loadout != null && loadout.name == payload.loadoutName)
-                    return loadout;
-            }
+            if (payload == null || string.IsNullOrWhiteSpace(payload.handlingName) ||
+                string.Equals(loadout.HandlingConfig.name, payload.handlingName, System.StringComparison.OrdinalIgnoreCase))
+                return loadout.HandlingConfig;
         }
 
-        return PlayerCarSelection.SelectedLoadout;
+        if (PlayerCarSelection.SelectedHandling != null &&
+            (payload == null || string.IsNullOrWhiteSpace(payload.handlingName) ||
+             string.Equals(PlayerCarSelection.SelectedHandling.name, payload.handlingName, System.StringComparison.OrdinalIgnoreCase)))
+        {
+            return PlayerCarSelection.SelectedHandling;
+        }
+
+        return loadout != null ? loadout.HandlingConfig : PlayerCarSelection.SelectedHandling;
     }
 
     private static BodySetConfig ResolveBodySet(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
     {
-        if (loadout == null || payload == null || loadout.BodySets == null || loadout.BodySets.Count == 0)
-            return PlayerCarSelection.SelectedBodySet;
-
-        int optionIndex = payload.bodySetOptionIndex;
-        if (loadout.IncludeStockBodyOption || loadout.BodySets.Count == 0)
-        {
-            if (optionIndex <= 0)
-                return null;
-
-            int bodySetIndex = optionIndex - 1;
-            return bodySetIndex >= 0 && bodySetIndex < loadout.BodySets.Count
-                ? loadout.BodySets[bodySetIndex]
-                : PlayerCarSelection.SelectedBodySet;
-        }
-
-        return optionIndex >= 0 && optionIndex < loadout.BodySets.Count
-            ? loadout.BodySets[optionIndex]
-            : PlayerCarSelection.SelectedBodySet;
+        return CarLoadoutResolver.ResolveBodySet(loadout, payload, PlayerCarSelection.SelectedBodySet);
     }
 
     private static EngineGearboxConfig ResolveEngine(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
     {
-        if (loadout == null || payload == null || loadout.EngineConfigs == null || loadout.EngineConfigs.Count == 0)
-            return PlayerCarSelection.SelectedEngine;
-
-        int index = payload.engineIndex;
-        return index >= 0 && index < loadout.EngineConfigs.Count
-            ? loadout.EngineConfigs[index]
-            : PlayerCarSelection.SelectedEngine;
+        return CarLoadoutResolver.ResolveEngine(loadout, payload, PlayerCarSelection.SelectedEngine);
     }
 
     private static SuspensionConfig ResolveSuspension(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
     {
-        if (loadout == null || payload == null || loadout.SuspensionConfigs == null || loadout.SuspensionConfigs.Count == 0)
-            return PlayerCarSelection.SelectedSuspension;
-
-        int index = payload.suspensionIndex;
-        return index >= 0 && index < loadout.SuspensionConfigs.Count
-            ? loadout.SuspensionConfigs[index]
-            : PlayerCarSelection.SelectedSuspension;
+        return CarLoadoutResolver.ResolveSuspension(loadout, payload, PlayerCarSelection.SelectedSuspension);
     }
 
     private static System.Collections.Generic.List<CarCustomizationSelection> ResolveCustomizations(PlayerCarSelectionPayload payload)
@@ -210,7 +187,7 @@ public class GameSceneBootstrap : MonoBehaviour
 
         if (loadout != null && loadout.PaintOptions != null && payload.paintIndex >= 0 && payload.paintIndex < loadout.PaintOptions.Count)
         {
-            PaintConfig config = loadout.PaintOptions[payload.paintIndex];
+            PaintConfig config = CarLoadoutResolver.ResolvePaint(loadout, payload, loadout.PaintOptions[payload.paintIndex]);
             if (config != null)
             {
                 paint = config.Color;
