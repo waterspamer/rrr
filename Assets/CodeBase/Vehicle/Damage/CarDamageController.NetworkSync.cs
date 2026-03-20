@@ -83,6 +83,12 @@ public partial class CarDamageController
         cpuTexture.Apply(false, false);
         Graphics.Blit(cpuTexture, runtimeTexture);
         ApplyRuntimeTextureToTargets();
+        if (deformMeshWithCompute)
+        {
+            if (deformTargets == null || deformTargets.Length == 0)
+                CacheDeformTargets();
+            ApplyComputeDeformation();
+        }
 
         if (snapshot.revision > damageRevision)
             damageRevision = snapshot.revision;
