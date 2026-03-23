@@ -67,6 +67,7 @@ public sealed class BackendLobbyPlayer
     public string player_id;
     public string player_name;
     public string connection_state;
+    public bool is_server_controlled;
     public string joined_at;
     public BackendCarConfigPayload car_config;
 }
@@ -102,6 +103,14 @@ public sealed class BackendJoinLobbyResponse
 }
 
 [Serializable]
+public sealed class BackendStartSoloResponse
+{
+    public bool started;
+    public string match_id;
+    public string server_player_id;
+}
+
+[Serializable]
 public sealed class BackendLeaveLobbyResponse
 {
     public bool left;
@@ -127,6 +136,11 @@ public sealed class BackendMatchInfo
     public string status;
     public string map_id;
     public int tick_rate;
+    public string room_id;
+    public string room_status;
+    public string room_http_url;
+    public string room_ws_url;
+    public string room_token;
     public List<BackendMatchPlayerInfo> players = new List<BackendMatchPlayerInfo>();
 }
 
@@ -179,6 +193,40 @@ public sealed class BackendPlayerStateMessage
     public int seq;
     public long client_time;
     public BackendPlayerStateSnapshot state;
+}
+
+[Serializable]
+public sealed class BackendPlayerInputMessage
+{
+    public string type = "player_input";
+    public string match_id;
+    public int seq;
+    public long client_time;
+    public BackendCarControlInputPayload input;
+    public BackendPlayerStateSnapshot state;
+}
+
+[Serializable]
+public sealed class BackendCarControlInputPayload
+{
+    public float throttle;
+    public float steer;
+    public bool brake;
+    public bool handbrake;
+    public bool nitro;
+
+    public static BackendCarControlInputPayload FromControlFrame(CarControlFrame frame)
+    {
+        frame.Clamp();
+        return new BackendCarControlInputPayload
+        {
+            throttle = frame.Motor,
+            steer = frame.Steer,
+            brake = frame.Brake,
+            handbrake = frame.Handbrake,
+            nitro = frame.Nitro
+        };
+    }
 }
 
 [Serializable]
@@ -288,6 +336,11 @@ public sealed class BackendMatchCreatedMessage
     public string match_id;
     public string lobby_id;
     public string map_id;
+    public string room_id;
+    public string room_status;
+    public string room_http_url;
+    public string room_ws_url;
+    public string room_token;
     public List<BackendMatchPlayerInfo> players = new List<BackendMatchPlayerInfo>();
 }
 
@@ -331,6 +384,7 @@ public sealed class BackendMatchPlayerInfo
     public string player_id;
     public string player_name;
     public string connection_state;
+    public bool is_server_controlled;
     public int authority_order;
     public string spawn_point_id;
     public BackendVector3 spawn_position;
@@ -346,8 +400,10 @@ public sealed class BackendMatchPlayerInfo
 public sealed class BackendMatchPlayerState
 {
     public string player_id;
+    public int ack_input_seq;
     public long client_time;
     public long server_received_time;
+    public BackendCarControlInputPayload input;
     public BackendVector3 position;
     public BackendVector3 rotation;
     public BackendVector3 velocity;

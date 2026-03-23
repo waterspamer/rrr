@@ -27,6 +27,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(0.01f)] private float remoteCollisionStaleTimeout = 0.18f;
     [SerializeField, Min(0.0f)] private float remoteCollisionRecoveryDelay = 0.35f;
     [SerializeField, Min(0.0f)] private float maxDepenetrationVelocity = 7.5f;
+    [SerializeField] private bool forceAuthoritativeLocalPlayer = true;
 
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
@@ -37,15 +38,43 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private bool matchSetupRequested;
     private CarDamageController localDamageController;
     private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
+    private readonly List<LocalAuthoritativeSnapshot> localAuthoritativeSnapshots = new List<LocalAuthoritativeSnapshot>(32);
+    private readonly List<LocalWheelPoseState> localInterpolatedWheelStates = new List<LocalWheelPoseState>(4);
     private readonly Dictionary<string, float> recentLocalPairCollisions = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
     private const float RemoteCollisionDedupeWindow = 0.35f;
     private bool applicationHasFocus = true;
     private float focusRecoveryUntil;
+    private bool localAuthoritativeMode;
+    private bool localControllerModeOverridden;
+    private bool localControllerEnabledBeforeOverride = true;
+    private bool localControllerInputEnabledBeforeOverride = true;
+    private bool localControllerPhysicsEnabledBeforeOverride = true;
+    private bool localBodyModeOverridden;
+    private bool localBodyKinematicBeforeOverride;
+    private bool localBodyUseGravityBeforeOverride = true;
 
     private sealed class LocalWheelBinding
     {
         public WheelCollider Collider;
         public Transform VisualRoot;
+    }
+
+    private struct LocalWheelPoseState
+    {
+        public bool HasPosition;
+        public Vector3 Position;
+        public bool HasRotation;
+        public Quaternion Rotation;
+    }
+
+    private sealed class LocalAuthoritativeSnapshot
+    {
+        public double LocalTime;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Vector3 Velocity;
+        public Vector3 AngularVelocity;
+        public List<LocalWheelPoseState> WheelStates = new List<LocalWheelPoseState>(4);
     }
 
     private void Awake()
@@ -85,6 +114,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.RealtimeErrorReceived -= HandleRealtimeErrorReceived;
         BindLocalDamageController(null);
+        RestoreLocalControllerMode();
     }
 
     private void Update()
@@ -94,10 +124,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         ApplyLocalSpawnIfReady();
 
+        if (localAuthoritativeMode)
+            TickLocalAuthoritativeState(Time.unscaledTimeAsDouble);
+
         if (Time.unscaledTime >= nextInputSendTime)
         {
             nextInputSendTime = Time.unscaledTime + (1.0f / Mathf.Max(1.0f, inputSendRate));
-            _ = SendLocalStateAsync();
+            _ = SendLocalInputAsync();
         }
 
         if (Time.unscaledTime >= nextPingTime)
@@ -164,7 +197,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
-    private async Task SendLocalStateAsync()
+    private async Task SendLocalInputAsync()
     {
         if (!IsMultiplayerActive())
             return;
@@ -172,11 +205,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         try
         {
             await EnsureRealtimeReadyAsync();
-            await Backend.Client.SendPlayerStateAsync(activeMatchId, ++inputSequence, CaptureLocalState());
+            await Backend.Client.SendPlayerInputAsync(
+                activeMatchId,
+                ++inputSequence,
+                CaptureLocalInput(),
+                localAuthoritativeMode ? null : CaptureLocalState());
         }
         catch (Exception ex)
         {
-            Debug.LogWarning("MultiplayerMatchRuntime: failed to send player state. " + ex.Message, this);
+            Debug.LogWarning("MultiplayerMatchRuntime: failed to send player input. " + ex.Message, this);
         }
     }
 
@@ -243,6 +280,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
 
         return snapshot;
+    }
+
+    private BackendCarControlInputPayload CaptureLocalInput()
+    {
+        CarControlFrame frame = localAuthoritativeMode
+            ? ReadAuthoritativeLocalControlFrame()
+            : ReadControllerControlFrame();
+        frame.Clamp();
+        return BackendCarControlInputPayload.FromControlFrame(frame);
     }
 
     private void RefreshLocalBindings()
@@ -328,6 +374,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         activeMatchId = matchInfo.match_id;
         localPlayerId = Backend.Client.Session != null ? Backend.Client.Session.player_id : localPlayerId;
         CacheMatchPlayers(matchInfo.players);
+        ConfigureLocalAuthorityMode(matchInfo);
         ApplyLocalSpawnIfReady(force: true);
         EnsureRemotePlayersSpawned();
     }
@@ -351,7 +398,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
                 seenPlayers.Add(playerState.player_id);
                 if (string.Equals(playerState.player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (localAuthoritativeMode)
+                        QueueLocalAuthoritativeState(state.server_time, playerState);
                     continue;
+                }
 
                 RemotePlayerProxy proxy = GetOrCreateRemotePlayer(playerState);
                 proxy.SetTargetState(
@@ -398,8 +449,39 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (!string.IsNullOrWhiteSpace(activeMatchId) &&
             !string.Equals(activeMatchId, message.match_id, StringComparison.OrdinalIgnoreCase))
             return;
+
         if (string.Equals(message.player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!localAuthoritativeMode)
+                return;
+
+            RefreshLocalBindings();
+            if (localDamageController == null || string.IsNullOrWhiteSpace(message.map_b64))
+                return;
+
+            byte[] rawBytes;
+            try
+            {
+                rawBytes = Convert.FromBase64String(message.map_b64);
+            }
+            catch
+            {
+                return;
+            }
+
+            localDamageController.ApplyNetworkDamageSnapshot(new CarDamageNetworkSnapshot
+            {
+                revision = message.revision,
+                width = message.width,
+                height = message.height,
+                rawBytes = rawBytes,
+                hasImpactPoint = message.world_point != null,
+                worldPoint = message.WorldPointVector,
+                hasImpactNormal = message.world_normal != null,
+                worldNormal = message.WorldNormalVector
+            });
             return;
+        }
 
         RemotePlayerProxy proxy = GetOrCreateRemotePlayer(message.player_id);
         proxy?.ApplyDamage(message);
@@ -407,6 +489,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
     private void HandleLocalDamageMapChanged(CarDamageNetworkSnapshot snapshot)
     {
+        if (localAuthoritativeMode)
+            return;
         if (!IsMultiplayerActive() || snapshot == null || snapshot.rawBytes == null || snapshot.rawBytes.Length == 0)
             return;
 
@@ -428,6 +512,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
     private void HandleLocalVehicleCollisionDetected(NetworkVehicleCollisionReport report)
     {
+        if (localAuthoritativeMode)
+            return;
         if (report == null || string.IsNullOrWhiteSpace(report.otherPlayerId) || string.IsNullOrWhiteSpace(localPlayerId))
             return;
 
@@ -523,6 +609,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             BackendMatchInfo info = await Backend.Client.GetMatchAsync(activeMatchId);
             CacheMatchPlayers(info != null ? info.players : null);
+            ConfigureLocalAuthorityMode(info);
             ApplyLocalSpawnIfReady(force: true);
             EnsureRemotePlayersSpawned();
         }
@@ -625,6 +712,473 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         return string.Compare(firstPlayerId, secondPlayerId, StringComparison.OrdinalIgnoreCase) <= 0
             ? firstPlayerId + "|" + secondPlayerId
             : secondPlayerId + "|" + firstPlayerId;
+    }
+
+    private CarControlFrame ReadControllerControlFrame()
+    {
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+
+        CarControllerBase controller = localPlayerCar != null ? localPlayerCar.Controller : null;
+        return controller != null ? controller.LastAppliedControlFrame : default;
+    }
+
+    private static CarControlFrame ReadAuthoritativeLocalControlFrame()
+    {
+        CarControlFrame frame = default;
+#if ENABLE_INPUT_SYSTEM
+        if (Keyboard.current != null)
+        {
+            frame = new CarControlFrame
+            {
+                Motor = (Keyboard.current.wKey.isPressed ? 1.0f : 0.0f) +
+                        (Keyboard.current.sKey.isPressed ? -1.0f : 0.0f),
+                Steer = (Keyboard.current.dKey.isPressed ? 1.0f : 0.0f) +
+                        (Keyboard.current.aKey.isPressed ? -1.0f : 0.0f),
+                Brake = false,
+                Handbrake = Keyboard.current.spaceKey.isPressed,
+                Nitro = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed
+            };
+            frame.Clamp();
+            return frame;
+        }
+#else
+        frame = new CarControlFrame
+        {
+            Motor = Input.GetAxis("Vertical"),
+            Steer = Input.GetAxis("Horizontal"),
+            Brake = false,
+            Handbrake = Input.GetKey(KeyCode.Space),
+            Nitro = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)
+        };
+        frame.Clamp();
+        return frame;
+#endif
+        return frame;
+    }
+
+    private void ConfigureLocalAuthorityMode(BackendMatchInfo matchInfo)
+    {
+        bool shouldUseAuthoritativeMode = forceAuthoritativeLocalPlayer &&
+                                          matchInfo != null &&
+                                          IsAuthoritativeRoom(matchInfo.room_status);
+
+        if (localAuthoritativeMode == shouldUseAuthoritativeMode)
+            return;
+
+        localAuthoritativeMode = shouldUseAuthoritativeMode;
+        RefreshLocalBindings();
+
+        CarControllerBase controller = localPlayerCar != null ? localPlayerCar.Controller : null;
+        Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
+
+        if (localAuthoritativeMode)
+        {
+            localAuthoritativeSnapshots.Clear();
+            localInterpolatedWheelStates.Clear();
+
+            if (controller != null && !localControllerModeOverridden)
+            {
+                localControllerEnabledBeforeOverride = controller.enabled;
+                localControllerInputEnabledBeforeOverride = controller.InputEnabled;
+                localControllerPhysicsEnabledBeforeOverride = controller.PhysicsSimulationEnabled;
+                localControllerModeOverridden = true;
+            }
+
+            if (controller != null)
+            {
+                // In server-authoritative mode the client becomes a visual puppet:
+                // local wheel colliders and chassis physics must stop fighting server snapshots.
+                controller.SetInputEnabled(false);
+                controller.SetPhysicsSimulationEnabled(false);
+                controller.enabled = false;
+            }
+
+            if (body != null && !localBodyModeOverridden)
+            {
+                localBodyKinematicBeforeOverride = body.isKinematic;
+                localBodyUseGravityBeforeOverride = body.useGravity;
+                localBodyModeOverridden = true;
+            }
+
+            if (body != null)
+            {
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+                body.isKinematic = true;
+                body.useGravity = false;
+                body.maxDepenetrationVelocity = maxDepenetrationVelocity;
+            }
+        }
+        else
+        {
+            localAuthoritativeSnapshots.Clear();
+            localInterpolatedWheelStates.Clear();
+
+            if (controller != null && localControllerModeOverridden)
+            {
+                controller.enabled = localControllerEnabledBeforeOverride;
+                controller.SetInputEnabled(localControllerInputEnabledBeforeOverride);
+                controller.SetPhysicsSimulationEnabled(localControllerPhysicsEnabledBeforeOverride);
+                localControllerModeOverridden = false;
+            }
+
+            if (body != null && localBodyModeOverridden)
+            {
+                body.isKinematic = localBodyKinematicBeforeOverride;
+                body.useGravity = localBodyUseGravityBeforeOverride;
+                localBodyModeOverridden = false;
+            }
+        }
+    }
+
+    private void RestoreLocalControllerMode()
+    {
+        if (!localControllerModeOverridden && !localBodyModeOverridden)
+            return;
+
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+
+        CarControllerBase controller = localPlayerCar != null ? localPlayerCar.Controller : null;
+        Rigidbody body = localPlayerCar != null ? localPlayerCar.GetComponent<Rigidbody>() : null;
+        if (controller != null)
+        {
+            controller.enabled = localControllerEnabledBeforeOverride;
+            controller.SetInputEnabled(localControllerInputEnabledBeforeOverride);
+            controller.SetPhysicsSimulationEnabled(localControllerPhysicsEnabledBeforeOverride);
+        }
+
+        if (body != null && localBodyModeOverridden)
+        {
+            body.isKinematic = localBodyKinematicBeforeOverride;
+            body.useGravity = localBodyUseGravityBeforeOverride;
+        }
+
+        localControllerModeOverridden = false;
+        localBodyModeOverridden = false;
+        localAuthoritativeSnapshots.Clear();
+        localInterpolatedWheelStates.Clear();
+        localAuthoritativeMode = false;
+    }
+
+    private void QueueLocalAuthoritativeState(long matchServerTimeMs, BackendMatchPlayerState playerState)
+    {
+        if (playerState == null)
+            return;
+
+        double snapshotTime = ResolveSnapshotLocalTime(matchServerTimeMs, playerState.client_time, playerState.server_received_time);
+        PushLocalAuthoritativeSnapshot(snapshotTime, playerState);
+    }
+
+    private void PushLocalAuthoritativeSnapshot(double localTime, BackendMatchPlayerState playerState)
+    {
+        if (playerState == null)
+            return;
+
+        if (localAuthoritativeSnapshots.Count > 0)
+        {
+            LocalAuthoritativeSnapshot newest = localAuthoritativeSnapshots[localAuthoritativeSnapshots.Count - 1];
+            if (localTime <= newest.LocalTime)
+                localTime = newest.LocalTime + 0.0001d;
+        }
+
+        localAuthoritativeSnapshots.Add(new LocalAuthoritativeSnapshot
+        {
+            LocalTime = localTime,
+            Position = playerState.PositionVector,
+            Rotation = Quaternion.Euler(playerState.RotationVector),
+            Velocity = playerState.VelocityVector,
+            AngularVelocity = playerState.AngularVelocityVector,
+            WheelStates = CloneLocalWheelStates(playerState.wheel_states)
+        });
+
+        int maxSnapshots = Mathf.Max(2, remoteSnapshotBufferSize);
+        if (localAuthoritativeSnapshots.Count > maxSnapshots)
+            localAuthoritativeSnapshots.RemoveRange(0, localAuthoritativeSnapshots.Count - maxSnapshots);
+    }
+
+    private void TickLocalAuthoritativeState(double localNow)
+    {
+        if (!localAuthoritativeMode || localAuthoritativeSnapshots.Count == 0)
+            return;
+
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        if (localPlayerCar == null)
+            return;
+
+        RefreshLocalBindings();
+
+        double renderTime = localNow - Mathf.Max(0.01f, Mathf.Min(0.05f, remoteInterpolationBackTime));
+        EvaluateLocalAuthoritativeSnapshot(
+            renderTime,
+            remoteExtrapolationLimit,
+            out Vector3 position,
+            out Quaternion rotation,
+            localInterpolatedWheelStates);
+        ApplyLocalAuthoritativeState(position, rotation, localInterpolatedWheelStates);
+    }
+
+    private void EvaluateLocalAuthoritativeSnapshot(
+        double renderTime,
+        float extrapolationLimit,
+        out Vector3 position,
+        out Quaternion rotation,
+        List<LocalWheelPoseState> wheelStateBuffer)
+    {
+        wheelStateBuffer.Clear();
+
+        if (localAuthoritativeSnapshots.Count == 1)
+        {
+            LocalAuthoritativeSnapshot only = localAuthoritativeSnapshots[0];
+            double dt = Math.Min(Math.Max(0.0d, renderTime - only.LocalTime), extrapolationLimit);
+            position = only.Position + only.Velocity * (float)dt;
+            rotation = only.AngularVelocity.sqrMagnitude > 0.0001f
+                ? only.Rotation * Quaternion.Euler(only.AngularVelocity * Mathf.Rad2Deg * (float)dt)
+                : only.Rotation;
+            CopyLocalWheelStates(only.WheelStates, wheelStateBuffer);
+            return;
+        }
+
+        while (localAuthoritativeSnapshots.Count >= 2 && localAuthoritativeSnapshots[1].LocalTime <= renderTime - 0.5d)
+            localAuthoritativeSnapshots.RemoveAt(0);
+
+        LocalAuthoritativeSnapshot oldest = localAuthoritativeSnapshots[0];
+        if (renderTime <= oldest.LocalTime)
+        {
+            position = oldest.Position;
+            rotation = oldest.Rotation;
+            CopyLocalWheelStates(oldest.WheelStates, wheelStateBuffer);
+            return;
+        }
+
+        for (int i = 0; i < localAuthoritativeSnapshots.Count - 1; i++)
+        {
+            LocalAuthoritativeSnapshot from = localAuthoritativeSnapshots[i];
+            LocalAuthoritativeSnapshot to = localAuthoritativeSnapshots[i + 1];
+            if (renderTime > to.LocalTime)
+                continue;
+
+            float t = (float)((renderTime - from.LocalTime) / Math.Max(0.0001d, to.LocalTime - from.LocalTime));
+            position = Vector3.LerpUnclamped(from.Position, to.Position, t);
+            rotation = Quaternion.SlerpUnclamped(from.Rotation, to.Rotation, t);
+            InterpolateLocalWheelStates(from.WheelStates, to.WheelStates, t, wheelStateBuffer);
+            return;
+        }
+
+        LocalAuthoritativeSnapshot latest = localAuthoritativeSnapshots[localAuthoritativeSnapshots.Count - 1];
+        double extrapolation = Math.Min(Math.Max(0.0d, renderTime - latest.LocalTime), extrapolationLimit);
+        position = latest.Position + latest.Velocity * (float)extrapolation;
+        rotation = latest.AngularVelocity.sqrMagnitude > 0.0001f
+            ? latest.Rotation * Quaternion.Euler(latest.AngularVelocity * Mathf.Rad2Deg * (float)extrapolation)
+            : latest.Rotation;
+        CopyLocalWheelStates(latest.WheelStates, wheelStateBuffer);
+    }
+
+    private void ApplyLocalAuthoritativeState(Vector3 position, Quaternion rotation, IReadOnlyList<LocalWheelPoseState> wheelStates)
+    {
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        if (localPlayerCar == null)
+            return;
+
+        Rigidbody body = localPlayerCar.GetComponent<Rigidbody>();
+        if (body != null)
+        {
+            body.maxDepenetrationVelocity = maxDepenetrationVelocity;
+            if (body.isKinematic)
+            {
+                if (Vector3.Distance(body.position, position) >= remoteTeleportDistance)
+                {
+                    body.position = position;
+                    body.rotation = rotation;
+                }
+                else
+                {
+                    body.MovePosition(position);
+                    body.MoveRotation(rotation);
+                }
+            }
+            else
+            {
+                body.position = position;
+                body.rotation = rotation;
+            }
+
+            body.linearVelocity = Vector3.zero;
+            body.angularVelocity = Vector3.zero;
+        }
+        else
+        {
+            Transform root = localPlayerCar.transform;
+            root.position = position;
+            root.rotation = rotation;
+        }
+
+        ApplyLocalWheelStates(wheelStates);
+    }
+
+    private void ApplyLocalWheelStates(List<BackendWheelPose> wheelStates)
+    {
+        if (wheelStates == null || wheelStates.Count == 0 || localWheelBindings.Count == 0)
+            return;
+
+        int count = Mathf.Min(localWheelBindings.Count, wheelStates.Count);
+        for (int i = 0; i < count; i++)
+        {
+            LocalWheelBinding binding = localWheelBindings[i];
+            BackendWheelPose pose = wheelStates[i];
+            if (binding == null || binding.VisualRoot == null || pose == null)
+                continue;
+
+            if (pose.position != null)
+                binding.VisualRoot.localPosition = pose.position.ToVector3();
+            if (pose.rotation != null)
+                binding.VisualRoot.localRotation = Quaternion.Euler(pose.rotation.ToVector3());
+        }
+    }
+
+    private void ApplyLocalWheelStates(IReadOnlyList<LocalWheelPoseState> wheelStates)
+    {
+        if (wheelStates == null || wheelStates.Count == 0 || localWheelBindings.Count == 0)
+            return;
+
+        int count = Mathf.Min(localWheelBindings.Count, wheelStates.Count);
+        for (int i = 0; i < count; i++)
+        {
+            LocalWheelBinding binding = localWheelBindings[i];
+            LocalWheelPoseState pose = wheelStates[i];
+            if (binding == null || binding.VisualRoot == null)
+                continue;
+
+            if (pose.HasPosition)
+                binding.VisualRoot.localPosition = pose.Position;
+            if (pose.HasRotation)
+                binding.VisualRoot.localRotation = pose.Rotation;
+        }
+    }
+
+    private static List<LocalWheelPoseState> CloneLocalWheelStates(List<BackendWheelPose> wheelStates)
+    {
+        List<LocalWheelPoseState> result = new List<LocalWheelPoseState>(wheelStates != null ? wheelStates.Count : 0);
+        if (wheelStates == null)
+            return result;
+
+        for (int i = 0; i < wheelStates.Count; i++)
+        {
+            BackendWheelPose pose = wheelStates[i];
+            LocalWheelPoseState item = default;
+            if (pose != null && pose.position != null)
+            {
+                item.HasPosition = true;
+                item.Position = pose.position.ToVector3();
+            }
+
+            if (pose != null && pose.rotation != null)
+            {
+                item.HasRotation = true;
+                item.Rotation = Quaternion.Euler(pose.rotation.ToVector3());
+            }
+
+            result.Add(item);
+        }
+
+        return result;
+    }
+
+    private static void CopyLocalWheelStates(IReadOnlyList<LocalWheelPoseState> source, List<LocalWheelPoseState> target)
+    {
+        target.Clear();
+        if (source == null)
+            return;
+
+        for (int i = 0; i < source.Count; i++)
+            target.Add(source[i]);
+    }
+
+    private static void InterpolateLocalWheelStates(
+        IReadOnlyList<LocalWheelPoseState> from,
+        IReadOnlyList<LocalWheelPoseState> to,
+        float t,
+        List<LocalWheelPoseState> target)
+    {
+        target.Clear();
+        int count = Mathf.Max(from != null ? from.Count : 0, to != null ? to.Count : 0);
+        for (int i = 0; i < count; i++)
+        {
+            LocalWheelPoseState result = default;
+            bool hasFrom = from != null && i < from.Count;
+            bool hasTo = to != null && i < to.Count;
+            if (hasFrom && hasTo && from[i].HasPosition && to[i].HasPosition)
+            {
+                result.HasPosition = true;
+                result.Position = Vector3.LerpUnclamped(from[i].Position, to[i].Position, t);
+            }
+            else if (hasTo && to[i].HasPosition)
+            {
+                result.HasPosition = true;
+                result.Position = to[i].Position;
+            }
+            else if (hasFrom && from[i].HasPosition)
+            {
+                result.HasPosition = true;
+                result.Position = from[i].Position;
+            }
+
+            if (hasFrom && hasTo && from[i].HasRotation && to[i].HasRotation)
+            {
+                result.HasRotation = true;
+                result.Rotation = Quaternion.SlerpUnclamped(from[i].Rotation, to[i].Rotation, t);
+            }
+            else if (hasTo && to[i].HasRotation)
+            {
+                result.HasRotation = true;
+                result.Rotation = to[i].Rotation;
+            }
+            else if (hasFrom && from[i].HasRotation)
+            {
+                result.HasRotation = true;
+                result.Rotation = from[i].Rotation;
+            }
+
+            target.Add(result);
+        }
+    }
+
+    private static double ResolveSnapshotLocalTime(long matchServerTimeMs, long clientTimeMs, long serverReceivedTimeMs)
+    {
+        double localNow = Time.unscaledTimeAsDouble;
+        if (matchServerTimeMs <= 0)
+            return localNow;
+
+        if (serverReceivedTimeMs > 0 && matchServerTimeMs >= serverReceivedTimeMs)
+        {
+            double serverAgeSec = (matchServerTimeMs - serverReceivedTimeMs) / 1000.0d;
+            return localNow - Math.Max(0.0d, serverAgeSec);
+        }
+
+        if (clientTimeMs > 0)
+            return localNow;
+
+        return localNow;
+    }
+
+    private static bool IsAuthoritativeRoom(string roomStatus)
+    {
+        if (string.IsNullOrWhiteSpace(roomStatus))
+            return false;
+
+        switch (roomStatus.Trim().ToLowerInvariant())
+        {
+            case "allocated":
+            case "ready":
+            case "reserved":
+            case "simulating":
+                return true;
+            default:
+                return false;
+        }
     }
 
     private sealed class RemotePlayerProxy

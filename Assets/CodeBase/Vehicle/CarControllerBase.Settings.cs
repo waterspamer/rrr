@@ -122,6 +122,7 @@ public abstract partial class CarControllerBase
 
     protected virtual void OnValidate()
     {
+        ResolveInputSource();
         ApplySettings();
         wheelRadius = Mathf.Clamp(wheelRadius, 0.05f, 2.0f);
         wheelWidth = Mathf.Clamp(wheelWidth, 0.05f, 1.0f);

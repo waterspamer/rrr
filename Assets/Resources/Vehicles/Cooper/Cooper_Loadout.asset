@@ -13,19 +13,15 @@ MonoBehaviour:
   m_Name: Cooper_Loadout
   m_EditorClassIdentifier: Assembly-CSharp::CarLoadoutConfig
   icon: {fileID: 0}
-  displayName: Mini Countryman JCW
+  displayName: Mini Cooper
   playerCarConfig: {fileID: 11400000, guid: 63d29d786a95dc645a890ff717522300, type: 2}
-  handlingConfig: {fileID: 11400000, guid: 0064233419754ecf9709a7f0c74b646c, type: 2}
+  handlingConfig: {fileID: 11400000, guid: a8f5197fcd963784a9dca53d92271c8e, type: 2}
   includeStockBodyOption: 1
   bodySets: []
   engineConfigs:
-  - {fileID: 11400000, guid: 5d529a11480d452ca7da9792c5c9cfb0, type: 2}
-  - {fileID: 11400000, guid: c09f8ad425f14316995d277c06768e67, type: 2}
-  - {fileID: 11400000, guid: 2c5a57a4f40a48b79b4c7061beca7472, type: 2}
+  - {fileID: 11400000, guid: 157e09c421b5aa6489641b2aba10a73a, type: 2}
   suspensionConfigs:
-  - {fileID: 11400000, guid: f93c1ccbfe144c10b168bf7efe831a37, type: 2}
-  - {fileID: 11400000, guid: d5c2ee4f3dd54e9cae9e79ffd99f9b0a, type: 2}
-  - {fileID: 11400000, guid: 9b93690299254c03b5dd08e90bcaa704, type: 2}
+  - {fileID: 11400000, guid: 4e294589e34968043a9c368a8a3a0789, type: 2}
   paintOptions:
   - {fileID: 11400000, guid: 7394eb72f3ce08945a7affb4f4245367, type: 2}
   - {fileID: 11400000, guid: b866780456cb7d1499c0882b6ea99251, type: 2}
@@ -41,6 +37,6 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e1f2a3b4c5d60718293a4b5c6d7e8f91, type: 2}
   - {fileID: 11400000, guid: f0e1d2c3b4a5968778695a4b3c2d1e0f, type: 2}
   defaultBodySetIndex: -1
-  defaultEngineIndex: 1
-  defaultSuspensionIndex: 1
+  defaultEngineIndex: 0
+  defaultSuspensionIndex: 0
   defaultPaintIndex: 0

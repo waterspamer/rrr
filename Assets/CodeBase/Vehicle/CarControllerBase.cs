@@ -129,6 +129,9 @@ public abstract partial class CarControllerBase : MonoBehaviour
     [SerializeField] private Color debugStabilityColor = new Color(0.3f, 1.0f, 0.4f);
     [SerializeField] private Color debugDriftColor = new Color(1.0f, 0.9f, 0.2f);
 
+    [Header("Input")]
+    [SerializeField] private MonoBehaviour inputSourceBehaviour;
+
     public struct Wheel
     {
         public WheelCollider Collider;
@@ -164,6 +167,8 @@ public abstract partial class CarControllerBase : MonoBehaviour
     private bool nitroInitialized;
     private bool nitroVfxInitialized;
     private ParticleSystem[] nitroVfxSystems;
+    private ICarInputSource inputSource;
+    private bool inputSourceWarningShown;
 
     public int CurrentGear => currentGear;
     public float CurrentRpm => currentRpm;
@@ -173,11 +178,21 @@ public abstract partial class CarControllerBase : MonoBehaviour
     public float IdleRpm => engine.idleRpm;
     public float SpeedKph => rb != null ? rb.linearVelocity.magnitude * 3.6f : 0.0f;
     public bool InputEnabled { get; private set; } = true;
+    public bool PhysicsSimulationEnabled { get; private set; } = true;
     public float NitroAmount => nitroAmount;
     public bool NitroActive => nitroActive;
+    public CarControlFrame LastAppliedControlFrame { get; private set; }
+    public float LastMotorTorque => lastDebugData.motorTorque;
+    public float LastBrakeTorque => lastDebugData.brakeTorque;
+    public float LastRearBrakeTorque => lastDebugData.rearBrakeTorque;
+    public float LastSteerAngle => lastDebugData.steerAngle;
+    public int WheelCount => wheels.Count;
+    public bool IsRigidBodySleeping => rb != null && rb.IsSleeping();
+    public int GroundedWheelCount => CountGroundedWheels();
 
     protected virtual void Awake()
     {
+        ResolveInputSource();
         ApplySettings();
         rb = GetComponent<Rigidbody>();
         rb.mass = mass;
@@ -208,50 +223,30 @@ public abstract partial class CarControllerBase : MonoBehaviour
 
     protected virtual void FixedUpdate()
     {
-        float motorInput = 0.0f;
-        float steerInput = 0.0f;
-        bool brakeInput = false;
-        bool handbrakeInput = false;
-        bool nitroInput = false;
+        if (!PhysicsSimulationEnabled)
+        {
+            LastAppliedControlFrame = CarControlFrame.CreateBrakingFrame();
+            SetNitroActive(false);
+            currentDriftKickForce = 0.0f;
+            lastDebugData = default;
+            ClearWheelDynamics();
+            return;
+        }
 
-        if (InputEnabled)
-        {
-#if ENABLE_INPUT_SYSTEM
-            if (Keyboard.current != null)
-            {
-                motorInput = (Keyboard.current.wKey.isPressed ? 1.0f : 0.0f) +
-                             (Keyboard.current.sKey.isPressed ? -1.0f : 0.0f);
-                steerInput = (Keyboard.current.dKey.isPressed ? 1.0f : 0.0f) +
-                             (Keyboard.current.aKey.isPressed ? -1.0f : 0.0f);
-                brakeInput = false;
-                handbrakeInput = Keyboard.current.spaceKey.isPressed;
-                nitroInput = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
-            }
-#else
-            motorInput = Input.GetAxis("Vertical");
-            steerInput = Input.GetAxis("Horizontal");
-            brakeInput = false;
-            handbrakeInput = Input.GetKey(KeyCode.Space);
-            nitroInput = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-#endif
-        }
-        else
-        {
-            brakeInput = true;
-            handbrakeInput = true;
-        }
+        CarControlFrame controlFrame = ResolveControlFrame();
+        LastAppliedControlFrame = controlFrame;
 
         VehicleDynamics.Inputs inputs = new VehicleDynamics.Inputs
         {
-            Motor = motorInput,
-            Steer = steerInput,
-            Brake = brakeInput,
-            Handbrake = handbrakeInput
+            Motor = controlFrame.Motor,
+            Steer = controlFrame.Steer,
+            Brake = controlFrame.Brake,
+            Handbrake = controlFrame.Handbrake
         };
 
         ApplyAutoBrakeFromOppositeInput(ref inputs, rb);
         ApplyDriveType();
-        UpdateNitro(nitroInput, inputs.Motor);
+        UpdateNitro(controlFrame.Nitro, inputs.Motor);
         UpdatePowertrain(inputs);
         UpdateSteering(inputs, Time.fixedDeltaTime);
         UpdateDriftKick(inputs, Time.fixedDeltaTime);
@@ -292,6 +287,24 @@ public abstract partial class CarControllerBase : MonoBehaviour
     public void SetInputEnabled(bool enabled)
     {
         InputEnabled = enabled;
+    }
+
+    public void SetPhysicsSimulationEnabled(bool enabled)
+    {
+        PhysicsSimulationEnabled = enabled;
+        if (!enabled)
+        {
+            SetNitroActive(false);
+            currentDriftKickForce = 0.0f;
+            lastDebugData = default;
+            ClearWheelDynamics();
+        }
+    }
+
+    public void SetInputSource(MonoBehaviour behaviour)
+    {
+        inputSourceBehaviour = behaviour;
+        ResolveInputSource();
     }
 
     protected virtual void LateUpdate()
@@ -669,6 +682,102 @@ public abstract partial class CarControllerBase : MonoBehaviour
                 if (system.isPlaying)
                     system.Stop(true, ParticleSystemStopBehavior.StopEmitting);
             }
+        }
+    }
+
+    private void ResolveInputSource()
+    {
+        if (inputSourceBehaviour == null)
+        {
+            inputSource = GetComponent<ICarInputSource>();
+            if (inputSource is MonoBehaviour sourceBehaviour)
+                inputSourceBehaviour = sourceBehaviour;
+            inputSourceWarningShown = false;
+            return;
+        }
+
+        inputSource = inputSourceBehaviour as ICarInputSource;
+        if (inputSource == null)
+        {
+            if (!inputSourceWarningShown)
+            {
+                Debug.LogWarning("CarControllerBase: assigned input source does not implement ICarInputSource.", this);
+                inputSourceWarningShown = true;
+            }
+            return;
+        }
+
+        inputSourceWarningShown = false;
+    }
+
+    private CarControlFrame ResolveControlFrame()
+    {
+        if (!InputEnabled)
+            return CarControlFrame.CreateBrakingFrame();
+
+        ResolveInputSource();
+        if (inputSource != null && inputSource.TryGetControlFrame(out CarControlFrame controlFrame))
+        {
+            controlFrame.Clamp();
+            return controlFrame;
+        }
+
+        return ReadDefaultLocalControlFrame();
+    }
+
+    private static CarControlFrame ReadDefaultLocalControlFrame()
+    {
+        CarControlFrame frame = default;
+
+#if ENABLE_INPUT_SYSTEM
+        if (Keyboard.current != null)
+        {
+            frame.Motor = (Keyboard.current.wKey.isPressed ? 1.0f : 0.0f) +
+                          (Keyboard.current.sKey.isPressed ? -1.0f : 0.0f);
+            frame.Steer = (Keyboard.current.dKey.isPressed ? 1.0f : 0.0f) +
+                          (Keyboard.current.aKey.isPressed ? -1.0f : 0.0f);
+            frame.Brake = false;
+            frame.Handbrake = Keyboard.current.spaceKey.isPressed;
+            frame.Nitro = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+            frame.Clamp();
+            return frame;
+        }
+#else
+        frame.Motor = Input.GetAxis("Vertical");
+        frame.Steer = Input.GetAxis("Horizontal");
+        frame.Brake = false;
+        frame.Handbrake = Input.GetKey(KeyCode.Space);
+        frame.Nitro = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        frame.Clamp();
+        return frame;
+#endif
+
+        return frame;
+    }
+
+    private int CountGroundedWheels()
+    {
+        int grounded = 0;
+        for (int i = 0; i < wheels.Count; i++)
+        {
+            if (wheels[i].Collider != null && wheels[i].Collider.GetGroundHit(out _))
+                grounded += 1;
+        }
+
+        return grounded;
+    }
+
+    private void ClearWheelDynamics()
+    {
+        for (int i = 0; i < wheels.Count; i++)
+        {
+            WheelCollider collider = wheels[i].Collider;
+            if (collider == null)
+                continue;
+
+            collider.motorTorque = 0.0f;
+            collider.brakeTorque = 0.0f;
+            collider.steerAngle = 0.0f;
         }
     }
 

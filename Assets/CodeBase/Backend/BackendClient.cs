@@ -116,6 +116,20 @@ public sealed class BackendClient
         return response;
     }
 
+    public async Task<BackendStartSoloResponse> StartSoloAsync(string lobbyId)
+    {
+        EnsureSession();
+        BackendStartSoloResponse response = await http.PostAsync<object, BackendStartSoloResponse>(
+            string.Format("lobbies/{0}/start-solo", lobbyId),
+            null,
+            SessionToken);
+
+        if (!string.IsNullOrWhiteSpace(lobbyId))
+            await GetLobbyAsync(lobbyId);
+
+        return response;
+    }
+
     public async Task<BackendLeaveLobbyResponse> LeaveLobbyAsync(string lobbyId)
     {
         EnsureSession();
@@ -201,17 +215,23 @@ public sealed class BackendClient
         });
     }
 
-    public Task SendPlayerStateAsync(string matchId, int sequence, BackendPlayerStateSnapshot state)
+    public Task SendPlayerInputAsync(string matchId, int sequence, BackendCarControlInputPayload input, BackendPlayerStateSnapshot state)
     {
-        BackendPlayerStateMessage message = new BackendPlayerStateMessage
+        BackendPlayerInputMessage message = new BackendPlayerInputMessage
         {
             match_id = matchId,
             seq = sequence,
             client_time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            input = input,
             state = state
         };
 
         return socket.SendAsync(message);
+    }
+
+    public Task SendPlayerStateAsync(string matchId, int sequence, BackendPlayerStateSnapshot state)
+    {
+        return SendPlayerInputAsync(matchId, sequence, null, state);
     }
 
     public Task SendDamageStateAsync(BackendDamageStateMessage message)
@@ -248,6 +268,11 @@ public sealed class BackendClient
                     lobby_id = created.lobby_id,
                     status = "starting",
                     map_id = created.map_id,
+                    room_id = created.room_id,
+                    room_status = created.room_status,
+                    room_http_url = created.room_http_url,
+                    room_ws_url = created.room_ws_url,
+                    room_token = created.room_token,
                     players = created.players != null ? new List<BackendMatchPlayerInfo>(created.players) : new List<BackendMatchPlayerInfo>()
                 };
                 if (CurrentLobby != null && string.Equals(CurrentLobby.lobby_id, created.lobby_id, StringComparison.OrdinalIgnoreCase))
@@ -479,6 +504,7 @@ public sealed class BackendClient
                 player_id = player.player_id,
                 player_name = player.player_name,
                 connection_state = player.connection_state,
+                is_server_controlled = player.is_server_controlled,
                 car_config = player.car_config
             });
         }

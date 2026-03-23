@@ -13,7 +13,10 @@ public sealed class NetworkPlayerSpawnManager : MonoBehaviour
 
     private bool localSpawnApplied;
     private bool hasMeasuredLocalRideHeight;
+    private bool hasSpawnAnchor;
     private float localRideHeight = 0.4f;
+    private Vector3 spawnAnchorPosition;
+    private Quaternion spawnAnchorRotation = Quaternion.identity;
     private readonly Dictionary<string, BackendMatchPlayerInfo> cachedPlayers = new Dictionary<string, BackendMatchPlayerInfo>(StringComparer.OrdinalIgnoreCase);
 
     public PlayerCar LocalPlayerCar
@@ -78,10 +81,11 @@ public sealed class NetworkPlayerSpawnManager : MonoBehaviour
         if (local == null)
             return;
 
+        EnsureSpawnAnchor(local.transform);
         Transform root = local.transform;
         Vector3 spawnPosition = ResolveSpawnPosition(local, player.SpawnPositionVector);
         root.position = spawnPosition;
-        root.rotation = Quaternion.Euler(player.SpawnRotationVector);
+        root.rotation = ResolveSpawnRotation(player.SpawnRotationVector);
 
         Rigidbody body = local.GetComponent<Rigidbody>();
         if (body != null)
@@ -95,13 +99,27 @@ public sealed class NetworkPlayerSpawnManager : MonoBehaviour
 
     private Vector3 ResolveSpawnPosition(PlayerCar local, Vector3 requestedSpawnPosition)
     {
+        requestedSpawnPosition = VehicleSpawnUtility.ResolveMatchSpawnPosition(
+            requestedSpawnPosition,
+            spawnAnchorPosition,
+            spawnAnchorRotation);
+
         float rideHeight = MeasureLocalRideHeight(local);
-        if (TryGetGroundHeight(requestedSpawnPosition, out float groundY))
+        if (VehicleSpawnUtility.TryGetGroundHeight(
+                requestedSpawnPosition,
+                spawnGroundProbeHeight,
+                spawnGroundProbeDistance,
+                out float groundY))
             requestedSpawnPosition.y = groundY + rideHeight;
         else
             requestedSpawnPosition.y += rideHeight;
 
         return requestedSpawnPosition;
+    }
+
+    private Quaternion ResolveSpawnRotation(Vector3 requestedSpawnRotation)
+    {
+        return VehicleSpawnUtility.ResolveMatchSpawnRotation(requestedSpawnRotation, spawnAnchorRotation);
     }
 
     private float MeasureLocalRideHeight(PlayerCar local)
@@ -110,30 +128,17 @@ public sealed class NetworkPlayerSpawnManager : MonoBehaviour
             return localRideHeight;
 
         hasMeasuredLocalRideHeight = true;
-        localRideHeight = Mathf.Max(0.05f, fallbackSpawnLift);
-        if (local == null)
-            return localRideHeight;
-
-        Vector3 sampleOrigin = local.transform.position + Vector3.up * spawnGroundProbeHeight;
-        if (Physics.Raycast(sampleOrigin, Vector3.down, out RaycastHit hit, spawnGroundProbeDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
-        {
-            localRideHeight = Mathf.Max(0.05f, local.transform.position.y - hit.point.y);
-            return localRideHeight;
-        }
-
+        localRideHeight = VehicleSpawnUtility.MeasureRideHeight(local, fallbackSpawnLift);
         return localRideHeight;
     }
 
-    private bool TryGetGroundHeight(Vector3 aroundPosition, out float groundY)
+    private void EnsureSpawnAnchor(Transform root)
     {
-        Vector3 sampleOrigin = aroundPosition + Vector3.up * spawnGroundProbeHeight;
-        if (Physics.Raycast(sampleOrigin, Vector3.down, out RaycastHit hit, spawnGroundProbeDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
-        {
-            groundY = hit.point.y;
-            return true;
-        }
+        if (hasSpawnAnchor || root == null)
+            return;
 
-        groundY = 0.0f;
-        return false;
+        hasSpawnAnchor = true;
+        spawnAnchorPosition = root.position;
+        spawnAnchorRotation = root.rotation;
     }
 }

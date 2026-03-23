@@ -59,25 +59,7 @@ public class GameSceneBootstrap : MonoBehaviour
             return;
         }
 
-        CarLoadoutConfig loadout = ResolveLoadout(cachedPayload);
-        PlayerCarConfig carConfig = loadout != null && loadout.PlayerCarConfig != null
-            ? loadout.PlayerCarConfig
-            : PlayerCarSelection.SelectedCarConfig;
-        VehicleSettings handling = ResolveHandling(loadout, cachedPayload);
-        BodySetConfig bodySet = ResolveBodySet(loadout, cachedPayload);
-        EngineGearboxConfig engine = ResolveEngine(loadout, cachedPayload);
-        SuspensionConfig suspension = ResolveSuspension(loadout, cachedPayload);
-
-        playerCar.OverrideLoadout(
-            carConfig,
-            handling,
-            bodySet,
-            engine,
-            suspension,
-            ResolveCustomizations(cachedPayload));
-
-        if (TryResolvePaint(loadout, cachedPayload, out Color paint))
-            playerCar.SetPaint(paint);
+        PlayerCarLoadoutUtility.ApplySelectedLoadout(playerCar, cachedPayload);
 
         if (ensureFollowCamera)
             EnsureFollowCamera(playerCar.transform);
@@ -122,89 +104,6 @@ public class GameSceneBootstrap : MonoBehaviour
 
         return false;
     }
-
-    private static CarLoadoutConfig ResolveLoadout(PlayerCarSelectionPayload payload)
-    {
-        return CarLoadoutResolver.Resolve(payload);
-    }
-
-    private static VehicleSettings ResolveHandling(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
-    {
-        if (loadout != null && loadout.HandlingConfig != null)
-        {
-            if (payload == null || string.IsNullOrWhiteSpace(payload.handlingName) ||
-                string.Equals(loadout.HandlingConfig.name, payload.handlingName, System.StringComparison.OrdinalIgnoreCase))
-                return loadout.HandlingConfig;
-        }
-
-        if (PlayerCarSelection.SelectedHandling != null &&
-            (payload == null || string.IsNullOrWhiteSpace(payload.handlingName) ||
-             string.Equals(PlayerCarSelection.SelectedHandling.name, payload.handlingName, System.StringComparison.OrdinalIgnoreCase)))
-        {
-            return PlayerCarSelection.SelectedHandling;
-        }
-
-        return loadout != null ? loadout.HandlingConfig : PlayerCarSelection.SelectedHandling;
-    }
-
-    private static BodySetConfig ResolveBodySet(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
-    {
-        return CarLoadoutResolver.ResolveBodySet(loadout, payload, PlayerCarSelection.SelectedBodySet);
-    }
-
-    private static EngineGearboxConfig ResolveEngine(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
-    {
-        return CarLoadoutResolver.ResolveEngine(loadout, payload, PlayerCarSelection.SelectedEngine);
-    }
-
-    private static SuspensionConfig ResolveSuspension(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload)
-    {
-        return CarLoadoutResolver.ResolveSuspension(loadout, payload, PlayerCarSelection.SelectedSuspension);
-    }
-
-    private static System.Collections.Generic.List<CarCustomizationSelection> ResolveCustomizations(PlayerCarSelectionPayload payload)
-    {
-        if (payload == null || payload.customizations == null || payload.customizations.Count == 0)
-            return PlayerCarSelection.SelectedCustomizations;
-
-        var resolved = new System.Collections.Generic.List<CarCustomizationSelection>(payload.customizations.Count);
-        for (int i = 0; i < payload.customizations.Count; i++)
-        {
-            PlayerCarCustomizationPayload customization = payload.customizations[i];
-            if (customization == null || string.IsNullOrWhiteSpace(customization.selectorPath))
-                continue;
-
-            resolved.Add(new CarCustomizationSelection(customization.selectorPath, customization.variantName));
-        }
-
-        return resolved;
-    }
-
-    private static bool TryResolvePaint(CarLoadoutConfig loadout, PlayerCarSelectionPayload payload, out Color paint)
-    {
-        paint = PlayerCarSelection.SelectedPaint;
-        if (payload == null)
-            return PlayerCarSelection.HasPaint;
-
-        if (loadout != null && loadout.PaintOptions != null && payload.paintIndex >= 0 && payload.paintIndex < loadout.PaintOptions.Count)
-        {
-            PaintConfig config = CarLoadoutResolver.ResolvePaint(loadout, payload, loadout.PaintOptions[payload.paintIndex]);
-            if (config != null)
-            {
-                paint = config.Color;
-                return true;
-            }
-        }
-
-        if (payload.hasPaint)
-        {
-            paint = payload.paint.ToColor();
-            return true;
-        }
-
-        return PlayerCarSelection.HasPaint;
-    }
-
     private void EnsureFollowCamera(Transform target)
     {
         if (target == null)

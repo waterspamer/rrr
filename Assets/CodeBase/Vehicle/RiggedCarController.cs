@@ -32,7 +32,6 @@ public class RiggedCarController : CarControllerBase
 
         bool bodyChanged = bodyPrefab != settings.bodyPrefab;
         bool wheelChanged = wheelPrefab != settings.wheelPrefab;
-
         settings.Validate();
         bodyPrefab = settings.bodyPrefab;
         wheelPrefab = settings.wheelPrefab;
