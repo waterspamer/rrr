@@ -221,6 +221,9 @@ public class CarGunShooter : MonoBehaviour
 
     private static Vector2 GetAimScreenPosition()
     {
+        if (Application.isBatchMode)
+            return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+
         if (Cursor.lockState == CursorLockMode.Locked)
             return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
 #if ENABLE_INPUT_SYSTEM
@@ -303,6 +306,9 @@ public class CarGunShooter : MonoBehaviour
 
     private static bool IsFireHeld()
     {
+        if (Application.isBatchMode)
+            return false;
+
 #if ENABLE_INPUT_SYSTEM
         if (Mouse.current != null)
             return Mouse.current.leftButton.isPressed;
@@ -314,6 +320,9 @@ public class CarGunShooter : MonoBehaviour
 
     private static bool IsAimHeld()
     {
+        if (Application.isBatchMode)
+            return false;
+
 #if ENABLE_INPUT_SYSTEM
         if (Mouse.current != null)
             return Mouse.current.rightButton.isPressed;

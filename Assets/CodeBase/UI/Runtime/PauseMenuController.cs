@@ -1,6 +1,9 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UIElements;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 [RequireComponent(typeof(UIDocument))]
 public class PauseMenuController : MonoBehaviour
@@ -39,8 +42,17 @@ public class PauseMenuController : MonoBehaviour
         if (Application.isBatchMode)
             return;
 
-        if (Input.GetKeyDown(KeyCode.Escape))
+        if (WasTogglePressed())
             Toggle();
+    }
+
+    private static bool WasTogglePressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        return Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame;
+#else
+        return Input.GetKeyDown(KeyCode.Escape);
+#endif
     }
 
     private void BuildUi()
@@ -141,6 +153,7 @@ public class PauseMenuController : MonoBehaviour
     private void BackToMenu()
     {
         Time.timeScale = 1.0f;
+        PurrNetSessionRuntime.Reset();
         SceneManager.LoadScene(mainMenuScene);
     }
 }

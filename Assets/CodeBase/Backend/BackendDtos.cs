@@ -336,6 +336,7 @@ public sealed class BackendMatchCreatedMessage
     public string match_id;
     public string lobby_id;
     public string map_id;
+    public int tick_rate;
     public string room_id;
     public string room_status;
     public string room_http_url;

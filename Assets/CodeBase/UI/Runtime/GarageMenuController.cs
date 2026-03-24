@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -37,6 +39,11 @@ public class GarageMenuController : MonoBehaviour
     [Header("Scene")]
     [SerializeField] private string gameSceneName = "Game";
     [SerializeField] private bool debugOverlay;
+
+    [Header("PurrNet Solo")]
+    [SerializeField] private string purrNetSoloHost = "93.183.80.30";
+    [SerializeField, Min(1024)] private int purrNetSoloPort = 5000;
+    [SerializeField, Range(10, 120)] private int purrNetSoloTickRate = 30;
 
     private readonly List<string> bodySetOptionNames = new List<string>();
     private readonly List<CustomizationSelectorState> rawSelectorStates = new List<CustomizationSelectorState>();
@@ -127,6 +134,8 @@ public class GarageMenuController : MonoBehaviour
 
     private void Awake()
     {
+        PurrNetSessionRuntime.Reset();
+
         if (uiDocument == null)
             uiDocument = GetComponent<UIDocument>();
         if (previewCar == null)
@@ -1385,8 +1394,8 @@ public class GarageMenuController : MonoBehaviour
                 "Start Solo",
                 "start",
                 multiplayerBusy
-                    ? "Requesting an authoritative solo room..."
-                    : "Spawn an idle server-side car and start the match without a second client.",
+                    ? "Connecting to the PurrNet dedicated server..."
+                    : "Connect directly to the dedicated PurrNet server and test the new prediction path in the Game scene.",
                 false,
                 StartSoloLobby));
         }
@@ -2034,35 +2043,74 @@ public class GarageMenuController : MonoBehaviour
 
     private async Task StartSoloLobbyAsync()
     {
-        BackendLobbyDetails lobby = Backend.Client.CurrentLobby;
-        if (lobby == null)
-        {
-            currentView = GarageView.MultiplayerBrowser;
-            RefreshVisibleView();
-            return;
-        }
+        await StartPurrNetSoloLobbyAsync();
+    }
 
+    private async Task StartPurrNetSoloLobbyAsync()
+    {
         multiplayerBusy = true;
-        multiplayerStatus = "Starting solo room...";
+        multiplayerStatus = "Connecting to dedicated PurrNet server...";
         RefreshVisibleView();
 
         try
         {
-            await EnsureMultiplayerReadyAsync(false);
-            PlayerCarSelectionPayload payload = CommitCurrentSelection();
-            await Backend.Client.UpdateCarConfigAsync(lobby.lobby_id, payload);
-            await Backend.Client.StartSoloAsync(lobby.lobby_id);
-            multiplayerStatus = "Solo room requested. Launching match...";
+            CommitCurrentSelection();
+
+            try
+            {
+                if (Backend.Client.IsRealtimeConnected)
+                    await Backend.Client.DisconnectRealtimeAsync();
+            }
+            catch
+            {
+            }
+
+            ushort port = (ushort)Mathf.Clamp(purrNetSoloPort, 1024, 65535);
+            int tickRate = Mathf.Clamp(purrNetSoloTickRate, 10, 120);
+            string host = string.IsNullOrWhiteSpace(purrNetSoloHost) ? "93.183.80.30" : purrNetSoloHost.Trim();
+            host = await ResolvePurrNetHostAsync(host);
+            PurrNetSessionRuntime.ConfigureClient(host, port, tickRate);
+            multiplayerSceneLaunchPending = true;
+            SceneManager.LoadScene(gameSceneName);
         }
         catch (Exception ex)
         {
+            PurrNetSessionRuntime.Reset();
             multiplayerStatus = ex.Message;
-        }
-        finally
-        {
             multiplayerBusy = false;
             RefreshVisibleView();
         }
+    }
+
+    private static async Task<string> ResolvePurrNetHostAsync(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return "93.183.80.30";
+
+        if (IPAddress.TryParse(host, out _))
+            return host;
+
+        try
+        {
+            IPAddress[] addresses = await Dns.GetHostAddressesAsync(host);
+            for (int i = 0; i < addresses.Length; i++)
+            {
+                if (addresses[i] != null && addresses[i].AddressFamily == AddressFamily.InterNetwork)
+                    return addresses[i].ToString();
+            }
+
+            for (int i = 0; i < addresses.Length; i++)
+            {
+                if (addresses[i] != null)
+                    return addresses[i].ToString();
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"GarageMenuController: failed to resolve PurrNet host '{host}'. {ex.Message}");
+        }
+
+        return host;
     }
 
     private void LeaveCurrentLobby()
@@ -2258,12 +2306,14 @@ public class GarageMenuController : MonoBehaviour
 
     private void StartSinglePlayerGame()
     {
+        PurrNetSessionRuntime.Reset();
         CommitCurrentSelection();
         SceneManager.LoadScene(gameSceneName);
     }
 
     private void StartMultiplayerGame()
     {
+        PurrNetSessionRuntime.Reset();
         CommitCurrentSelection();
         SceneManager.LoadScene(gameSceneName);
     }

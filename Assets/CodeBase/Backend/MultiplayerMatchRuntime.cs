@@ -17,6 +17,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [Header("Networking")]
     [SerializeField, Min(1.0f)] private float inputSendRate = 30.0f;
     [SerializeField, Min(1.0f)] private float pingRate = 2.0f;
+    [SerializeField, Min(0.1f)] private float matchSetupRetryDelay = 1.0f;
 
     [Header("Remote Players")]
     [SerializeField] private Material remoteFallbackMaterial;
@@ -27,6 +28,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(0.5f)] private float remoteTeleportDistance = 12.0f;
     [SerializeField, Min(0.01f)] private float remoteCollisionStaleTimeout = 0.18f;
     [SerializeField, Min(0.0f)] private float remoteCollisionRecoveryDelay = 0.35f;
+    [SerializeField, Min(0.0f)] private float remotePresentationSnapDistance = 0.2f;
+    [SerializeField, Min(0.0f)] private float remotePresentationSnapRotation = 3.0f;
+    [SerializeField, Min(0.0f)] private float remotePresentationCorrectionSmooth = 18.0f;
+    [SerializeField, Min(0.0f)] private float remotePresentationMaxOffset = 2.0f;
     [SerializeField, Min(0.0f)] private float maxDepenetrationVelocity = 7.5f;
     [SerializeField] private bool forceAuthoritativeLocalPlayer = true;
 
@@ -35,9 +40,27 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(4)] private int localPredictionHistorySize = 128;
     [SerializeField, Min(0.0f)] private float localPredictionPositionDeadzone = 0.6f;
     [SerializeField, Min(0.0f)] private float localPredictionRotationDeadzone = 8.0f;
+    [SerializeField, Min(0.0f)] private float localPredictionHardPositionDeadzone = 2.0f;
+    [SerializeField, Min(0.0f)] private float localPredictionHardRotationDeadzone = 18.0f;
+    [SerializeField, Min(1)] private int localPredictionSoftCorrectionConfirmations = 2;
     [SerializeField, Min(0)] private int localPredictionMaxReplaySteps = 32;
     [SerializeField, Min(0.0f)] private float localPredictionCameraSmoothTime = 0.05f;
     [SerializeField, Min(0.0f)] private float localPredictionCameraRotationSmooth = 12.0f;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraCorrectionSmoothTime = 0.12f;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraCorrectionRotationSmooth = 12.0f;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraCorrectionMaxDistance = 3.5f;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraCorrectionMaxRotation = 22.0f;
+    [SerializeField] private bool enableLocalPresentationLayer = true;
+
+    [Header("Debug")]
+    [SerializeField] private bool drawNetworkPoseGizmos = true;
+    [SerializeField, Min(0.05f)] private float poseGizmoMarkerRadius = 0.18f;
+    [SerializeField, Min(0.1f)] private float poseGizmoAxisLength = 1.4f;
+    [SerializeField] private Color poseGizmoServerColor = new Color(1.0f, 0.45f, 0.12f, 1.0f);
+    [SerializeField] private Color poseGizmoClientColor = new Color(0.1f, 0.95f, 0.45f, 1.0f);
+    [SerializeField] private bool drawNetworkInputOverlay = true;
+    [SerializeField] private Vector2 inputOverlayScreenOffset = new Vector2(18.0f, 18.0f);
+    [SerializeField, Min(320.0f)] private float inputOverlayWidth = 520.0f;
 
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
@@ -45,7 +68,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private int inputSequence;
     private string localPlayerId;
     private string activeMatchId;
-    private bool matchSetupRequested;
+    private bool matchSetupRequestInFlight;
+    private double lastMatchSetupAttemptLocalTime;
     private CarDamageController localDamageController;
     private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
     private readonly List<LocalAuthoritativeSnapshot> localAuthoritativeSnapshots = new List<LocalAuthoritativeSnapshot>(32);
@@ -70,6 +94,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private Vector3 localPredictionCameraVelocity;
     private Quaternion localPredictionCameraRotation = Quaternion.identity;
     private bool localPredictionCameraInitialized;
+    private Vector3 localPredictionCameraCorrectionOffset;
+    private Vector3 localPredictionCameraCorrectionVelocity;
+    private Quaternion localPredictionCameraCorrectionRotationOffset = Quaternion.identity;
+    private Transform localPresentationRoot;
+    private Transform localPresentationSourceBody;
+    private readonly List<LocalPresentationTransformBinding> localPresentationBodyBindings = new List<LocalPresentationTransformBinding>(64);
+    private readonly List<LocalPresentationWheelBinding> localPresentationWheelBindings = new List<LocalPresentationWheelBinding>(4);
+    private readonly List<LocalPresentationHiddenRendererState> localPresentationHiddenRenderers = new List<LocalPresentationHiddenRendererState>(16);
     private SimulationMode localPhysicsSimulationModeBeforeOverride = SimulationMode.FixedUpdate;
     private bool localPhysicsSimulationModeOverridden;
     private PendingLocalReconciliation pendingLocalReconciliation;
@@ -77,6 +109,32 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private bool localFixedDeltaTimeOverridden;
     private bool localSnapshotTimelineInitialized;
     private double localSnapshotServerToLocalOffset;
+    private double localSnapshotTimelineLastSampleLocalTime;
+    private bool localServerPoseAvailable;
+    private Vector3 localServerPosition;
+    private Quaternion localServerRotation = Quaternion.identity;
+    private Vector3 localServerVelocity;
+    private Vector3 localServerAngularVelocity;
+    private int localServerWheelStateCount;
+    private BackendVehicleDebugState localServerVehicleDebug;
+    private double localServerSnapshotReceivedLocalTime;
+    private long localServerSnapshotServerTimeMs;
+    private InputDebugSnapshot localClientInputDebug;
+    private InputDebugSnapshot localServerInputDebug;
+    private int localPredictionCorrectionCandidateSequence = -1;
+    private int localPredictionCorrectionConsecutiveCount;
+    private float localPredictionAckMatchedPositionError;
+    private float localPredictionAckMatchedRotationError;
+    private float localPredictionLastAppliedCorrectionDistance;
+    private float localPredictionLastAppliedCorrectionRotation;
+    private GUIStyle inputOverlayBoxStyle;
+    private GUIStyle inputOverlayTitleStyle;
+    private GUIStyle inputOverlayHeaderStyle;
+    private GUIStyle inputOverlayLabelStyle;
+    private GUIStyle inputOverlayValueStyle;
+    private const double SnapshotTimelineHardResetThresholdSeconds = 0.25d;
+    private const double SnapshotTimelineMaxCorrectionPerSampleSeconds = 0.012d;
+    private const double SnapshotTimelineFilterStrength = 10.0d;
 
     private sealed class LocalWheelBinding
     {
@@ -115,9 +173,95 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         public ServerSyncedComponentState AuthoritativeState;
     }
 
+    private sealed class LocalPresentationTransformBinding
+    {
+        public Transform Source;
+        public Transform Clone;
+        public Renderer SourceRenderer;
+        public Renderer CloneRenderer;
+        public MeshFilter SourceMeshFilter;
+        public MeshFilter CloneMeshFilter;
+        public SkinnedMeshRenderer SourceSkinnedMesh;
+        public SkinnedMeshRenderer CloneSkinnedMesh;
+    }
+
+    private sealed class LocalPresentationWheelBinding
+    {
+        public Transform Source;
+        public Transform Clone;
+    }
+
+    private struct LocalPresentationHiddenRendererState
+    {
+        public Renderer Renderer;
+        public bool ForceRenderingOffBefore;
+    }
+
+    private struct InputDebugSnapshot
+    {
+        public bool Available;
+        public int Sequence;
+        public long ClientTimeMs;
+        public long ServerReceivedTimeMs;
+        public float Throttle;
+        public float Steer;
+        public bool Brake;
+        public bool Handbrake;
+        public bool Nitro;
+    }
+
+    private struct RemoteOverlayDebugSnapshot
+    {
+        public bool Available;
+        public string PlayerId;
+        public Vector3 ClientPosition;
+        public Quaternion ClientRotation;
+        public Vector3 ServerPosition;
+        public Quaternion ServerRotation;
+        public Vector3 ServerVelocity;
+        public Vector3 ServerAngularVelocity;
+        public int ServerWheelStateCount;
+        public int ClientWheelVisualCount;
+        public InputDebugSnapshot ServerInput;
+        public BackendVehicleDebugState ServerVehicleDebug;
+        public double SnapshotAgeMs;
+    }
+
+    private struct LocalVehicleOverlaySnapshot
+    {
+        public bool Available;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Vector3 Velocity;
+        public Vector3 AngularVelocity;
+        public int WheelVisualCount;
+        public float SpeedKph;
+        public int CurrentGear;
+        public int RequestedGear;
+        public float CurrentRpm;
+        public float ShiftTimer;
+        public int ShiftState;
+        public float MotorTorque;
+        public float BrakeTorque;
+        public float RearBrakeTorque;
+        public float SteerAngle;
+        public float NitroAmount;
+        public bool NitroActive;
+        public bool NitroInitialized;
+        public int GroundedWheels;
+        public int WheelCount;
+        public bool InputEnabled;
+        public bool Sleeping;
+    }
+
     private bool IsUsingLocalPrediction()
     {
         return localAuthoritativeMode && enableLocalPrediction;
+    }
+
+    private bool IsUsingLocalPresentationLayer()
+    {
+        return IsUsingLocalPrediction() && enableLocalPresentationLayer;
     }
 
     private void Awake()
@@ -157,15 +301,205 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         Backend.Client.MatchInfoChanged -= HandleMatchInfoChanged;
         Backend.Client.RealtimeErrorReceived -= HandleRealtimeErrorReceived;
         BindLocalDamageController(null);
+        ClearLocalPoseGizmo();
+        ClearInputDebugState();
         RestoreLocalControllerMode();
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!drawNetworkPoseGizmos || !Application.isPlaying)
+            return;
+
+        if (poseGizmoMarkerRadius <= 0.0f || poseGizmoAxisLength <= 0.0f)
+            return;
+
+        if (localPlayerCar != null && localServerPoseAvailable)
+        {
+            DrawPosePairGizmo(
+                localPlayerCar.transform.position,
+                localPlayerCar.transform.rotation,
+                localServerPosition,
+                localServerRotation,
+                poseGizmoClientColor,
+                poseGizmoServerColor,
+                poseGizmoMarkerRadius,
+                poseGizmoAxisLength);
+        }
+
+        foreach (RemotePlayerProxy proxy in remotePlayers.Values)
+        {
+            if (proxy == null ||
+                !proxy.TryGetPoseGizmoState(
+                    out Vector3 clientPosition,
+                    out Quaternion clientRotation,
+                    out Vector3 serverPosition,
+                    out Quaternion serverRotation))
+            {
+                continue;
+            }
+
+            DrawPosePairGizmo(
+                clientPosition,
+                clientRotation,
+                serverPosition,
+                serverRotation,
+                poseGizmoClientColor,
+                poseGizmoServerColor,
+                poseGizmoMarkerRadius,
+                poseGizmoAxisLength);
+        }
+    }
+
+    private void OnGUI()
+    {
+        if (!drawNetworkInputOverlay || !Application.isPlaying)
+            return;
+
+        BackendMatchInfo matchInfo = Backend.Client.CurrentMatchInfo;
+        if (matchInfo == null || string.IsNullOrWhiteSpace(matchInfo.match_id))
+            return;
+
+        LocalVehicleOverlaySnapshot localClientVehicle = CaptureLocalClientVehicleOverlaySnapshot();
+        bool hasRemoteDebug = TryGetPrimaryRemoteOverlayDebugSnapshot(out RemoteOverlayDebugSnapshot remoteDebug);
+
+        if (!localClientInputDebug.Available &&
+            !localServerInputDebug.Available &&
+            !localClientVehicle.Available &&
+            !hasRemoteDebug)
+        return;
+
+        EnsureInputOverlayStyles();
+
+        float width = Mathf.Max(760.0f, inputOverlayWidth);
+        float rowHeight = 18.0f;
+        float height = hasRemoteDebug ? 820.0f : 620.0f;
+        Rect area = new Rect(inputOverlayScreenOffset.x, inputOverlayScreenOffset.y, width, height);
+        GUI.Box(area, GUIContent.none, inputOverlayBoxStyle);
+
+        Rect titleRect = new Rect(area.x + 12.0f, area.y + 10.0f, area.width - 24.0f, 22.0f);
+        string modeLabel = localAuthoritativeMode
+            ? (IsUsingLocalPrediction() ? "Authority Mode: Prediction" : "Authority Mode: Remote Drive")
+            : "Authority Mode: Client Drive";
+        GUI.Label(titleRect, "Sync Debug HUD  |  " + modeLabel, inputOverlayTitleStyle);
+
+        float labelX = area.x + 14.0f;
+        float clientX = area.x + 212.0f;
+        float serverX = area.x + 474.0f;
+        float valueWidth = 236.0f;
+        float y = area.y + 38.0f;
+
+        if (matchInfo != null)
+        {
+            DrawOverlaySingleRow(labelX, y, "Match", matchInfo.match_id + "  |  " + matchInfo.map_id);
+            y += rowHeight;
+            DrawOverlaySingleRow(
+                labelX,
+                y,
+                "Room",
+                matchInfo.room_status + "  |  tick " + matchInfo.tick_rate.ToString() + "  |  players " + (matchInfo.players != null ? matchInfo.players.Count.ToString() : "0"));
+            y += rowHeight + 6.0f;
+        }
+
+        DrawOverlaySectionHeader(labelX, clientX, serverX, valueWidth, y, "Local Input");
+        y += rowHeight + 2.0f;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Seq", FormatInputSequence(localClientInputDebug), FormatInputSequence(localServerInputDebug));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "SeqGap", "-", FormatSequenceGap(localClientInputDebug, localServerInputDebug));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "AckAgeMs", "-", FormatAckAgeMilliseconds(localClientInputDebug, localServerInputDebug));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Throttle", FormatInputFloat(localClientInputDebug.Throttle, localClientInputDebug.Available), FormatInputFloat(localServerInputDebug.Throttle, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Steer", FormatInputFloat(localClientInputDebug.Steer, localClientInputDebug.Available), FormatInputFloat(localServerInputDebug.Steer, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Brake", FormatInputBool(localClientInputDebug.Brake, localClientInputDebug.Available), FormatInputBool(localServerInputDebug.Brake, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Handbrake", FormatInputBool(localClientInputDebug.Handbrake, localClientInputDebug.Available), FormatInputBool(localServerInputDebug.Handbrake, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Nitro", FormatInputBool(localClientInputDebug.Nitro, localClientInputDebug.Available), FormatInputBool(localServerInputDebug.Nitro, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "ClientTime", FormatInputLong(localClientInputDebug.ClientTimeMs, localClientInputDebug.Available), FormatInputLong(localServerInputDebug.ClientTimeMs, localServerInputDebug.Available));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "ServerRecv", FormatInputLong(localClientInputDebug.ServerReceivedTimeMs, localClientInputDebug.Available), FormatInputLong(localServerInputDebug.ServerReceivedTimeMs, localServerInputDebug.Available));
+        y += rowHeight + 8.0f;
+
+        DrawOverlaySectionHeader(labelX, clientX, serverX, valueWidth, y, "Local State");
+        y += rowHeight + 2.0f;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Pos", FormatVector3(localClientVehicle.Position, localClientVehicle.Available), FormatVector3(localServerPosition, localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Vel", FormatVector3(localClientVehicle.Velocity, localClientVehicle.Available), FormatVector3(localServerVelocity, localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "AngVel", FormatVector3(localClientVehicle.AngularVelocity, localClientVehicle.Available), FormatVector3(localServerAngularVelocity, localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "SpeedKph", FormatAvailableFloat(localClientVehicle.SpeedKph, localClientVehicle.Available), FormatAvailableFloat(localServerVehicleDebug != null ? localServerVehicleDebug.speed_kph : localServerVelocity.magnitude * 3.6f, localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Gear", FormatGear(localClientVehicle.CurrentGear, localClientVehicle.RequestedGear, localClientVehicle.Available), FormatGear(localServerVehicleDebug != null ? localServerVehicleDebug.current_gear : 0, localServerVehicleDebug != null ? localServerVehicleDebug.requested_gear : 0, localServerVehicleDebug != null));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "RPM", FormatAvailableFloat(localClientVehicle.CurrentRpm, localClientVehicle.Available), FormatAvailableFloat(localServerVehicleDebug != null ? localServerVehicleDebug.current_rpm : 0.0f, localServerVehicleDebug != null));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Torque", FormatTorqueSet(localClientVehicle.MotorTorque, localClientVehicle.BrakeTorque, localClientVehicle.RearBrakeTorque, localClientVehicle.Available), FormatTorqueSet(localServerVehicleDebug != null ? localServerVehicleDebug.motor_torque : 0.0f, localServerVehicleDebug != null ? localServerVehicleDebug.brake_torque : 0.0f, localServerVehicleDebug != null ? localServerVehicleDebug.rear_brake_torque : 0.0f, localServerVehicleDebug != null));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Steer/Nitro", FormatSteerNitro(localClientVehicle.SteerAngle, localClientVehicle.NitroAmount, localClientVehicle.NitroActive, localClientVehicle.Available), FormatSteerNitro(localServerVehicleDebug != null ? localServerVehicleDebug.steer_angle : 0.0f, localServerVehicleDebug != null ? localServerVehicleDebug.nitro_amount : 0.0f, localServerVehicleDebug != null && localServerVehicleDebug.nitro_active, localServerVehicleDebug != null));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Ground/Wheels", FormatGroundWheels(localClientVehicle.GroundedWheels, localClientVehicle.WheelCount, localClientVehicle.Available), FormatGroundWheels(localServerVehicleDebug != null ? localServerVehicleDebug.grounded_wheels : 0, localServerVehicleDebug != null ? localServerVehicleDebug.wheel_count : localServerWheelStateCount, localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Input/Sleep", FormatInputSleep(localClientVehicle.InputEnabled, localClientVehicle.Sleeping, localClientVehicle.Available), FormatInputSleep(localServerVehicleDebug != null && localServerVehicleDebug.input_enabled, localServerVehicleDebug != null && localServerVehicleDebug.sleeping, localServerVehicleDebug != null));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "PosErr", "-", FormatAvailableFloat(localClientVehicle.Available && localServerPoseAvailable ? Vector3.Distance(localClientVehicle.Position, localServerPosition) : 0.0f, localClientVehicle.Available && localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "RotErr", "-", FormatAvailableFloat(localClientVehicle.Available && localServerPoseAvailable ? Quaternion.Angle(localClientVehicle.Rotation, localServerRotation) : 0.0f, localClientVehicle.Available && localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "VelErr", "-", FormatAvailableFloat(localClientVehicle.Available && localServerPoseAvailable ? Vector3.Distance(localClientVehicle.Velocity, localServerVelocity) : 0.0f, localClientVehicle.Available && localServerPoseAvailable));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "SnapAgeMs", "-", FormatAvailableFloat(localServerSnapshotReceivedLocalTime > 0.0d ? (float)((Time.unscaledTimeAsDouble - localServerSnapshotReceivedLocalTime) * 1000.0d) : 0.0f, localServerSnapshotReceivedLocalTime > 0.0d));
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "AckMatchErr", FormatAckMatchError(localPredictionAckMatchedPositionError, localPredictionAckMatchedRotationError), "-");
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Reconcile", FormatAckMatchError(localPredictionLastAppliedCorrectionDistance, localPredictionLastAppliedCorrectionRotation), "-");
+        y += rowHeight;
+        DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "CorrGate", FormatCorrectionGate(localPredictionCorrectionConsecutiveCount, localPredictionSoftCorrectionConfirmations), "-");
+        y += rowHeight + 8.0f;
+
+        if (hasRemoteDebug)
+        {
+            DrawOverlaySectionHeader(labelX, clientX, serverX, valueWidth, y, "Remote  |  " + remoteDebug.PlayerId);
+            y += rowHeight + 2.0f;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Pos", FormatVector3(remoteDebug.ClientPosition, true), FormatVector3(remoteDebug.ServerPosition, true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Yaw", FormatAvailableFloat(remoteDebug.ClientRotation.eulerAngles.y, true), FormatAvailableFloat(remoteDebug.ServerRotation.eulerAngles.y, true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "PosErr", "-", FormatAvailableFloat(Vector3.Distance(remoteDebug.ClientPosition, remoteDebug.ServerPosition), true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "RotErr", "-", FormatAvailableFloat(Quaternion.Angle(remoteDebug.ClientRotation, remoteDebug.ServerRotation), true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Vel", "-", FormatVector3(remoteDebug.ServerVelocity, true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "WheelVis/State", remoteDebug.ClientWheelVisualCount.ToString(), remoteDebug.ServerWheelStateCount.ToString());
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "SpeedKph", "-", FormatAvailableFloat(remoteDebug.ServerVehicleDebug != null ? remoteDebug.ServerVehicleDebug.speed_kph : remoteDebug.ServerVelocity.magnitude * 3.6f, true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Ground/Wheels", "-", FormatGroundWheels(remoteDebug.ServerVehicleDebug != null ? remoteDebug.ServerVehicleDebug.grounded_wheels : 0, remoteDebug.ServerVehicleDebug != null ? remoteDebug.ServerVehicleDebug.wheel_count : remoteDebug.ServerWheelStateCount, true));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "Input/Sleep", "-", FormatInputSleep(remoteDebug.ServerVehicleDebug != null && remoteDebug.ServerVehicleDebug.input_enabled, remoteDebug.ServerVehicleDebug != null && remoteDebug.ServerVehicleDebug.sleeping, remoteDebug.ServerVehicleDebug != null));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "ServerInput", "-", FormatInputSummary(remoteDebug.ServerInput));
+            y += rowHeight;
+            DrawInputOverlayRow(labelX, clientX, serverX, valueWidth, y, "SnapAgeMs", "-", FormatAvailableFloat((float)remoteDebug.SnapshotAgeMs, remoteDebug.SnapshotAgeMs >= 0.0d));
+        }
     }
 
     private void Update()
     {
         if (!IsMultiplayerActive())
+        {
+            ClearInputDebugState();
+            ClearLocalPoseGizmo();
             return;
+        }
 
         ApplyLocalSpawnIfReady();
+        UpdateLocalInputDebugState();
 
         if (localAuthoritativeMode)
         {
@@ -198,7 +532,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 remoteTeleportDistance,
                 remoteCollisionStaleTimeout,
                 remoteCollisionRecoveryDelay,
-                collisionsAllowed);
+                collisionsAllowed,
+                remotePresentationSnapDistance,
+                remotePresentationSnapRotation,
+                remotePresentationCorrectionSmooth,
+                remotePresentationMaxOffset);
     }
 
     private void FixedUpdate()
@@ -207,6 +545,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return;
 
         SendLocalPredictedInputTick();
+    }
+
+    private void LateUpdate()
+    {
+        if (IsUsingLocalPresentationLayer())
+            TickLocalPresentationLayer();
+        else
+            DestroyLocalPresentationLayer();
     }
 
     private void OnApplicationFocus(bool hasFocus)
@@ -232,7 +578,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         activeMatchId = matchInfo.match_id;
         localPlayerId = Backend.Client.Session != null ? Backend.Client.Session.player_id : null;
         CacheMatchPlayers(matchInfo.players);
-        if ((matchInfo.players == null || matchInfo.players.Count == 0) && !matchSetupRequested)
+        if (ShouldFetchMatchSetup(matchInfo))
             _ = EnsureMatchSetupAsync();
         return !string.IsNullOrWhiteSpace(localPlayerId);
     }
@@ -429,6 +775,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return;
         }
 
+        Transform localTransform = localPlayerCar.transform;
+        Vector3 preReconcilePosition = localTransform.position;
+        Quaternion preReconcileRotation = localTransform.rotation;
+
         List<LocalPredictedInputSample> replaySamples = new List<LocalPredictedInputSample>();
         for (int i = 0; i < localPredictedInputs.Count; i++)
         {
@@ -453,6 +803,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         if (replayOverflow)
         {
+            RecordLocalPredictionAppliedCorrection(preReconcilePosition, preReconcileRotation, localTransform.position, localTransform.rotation);
             localPredictedInputs.Clear();
             pendingLocalReconciliation = null;
             return;
@@ -468,6 +819,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         localPredictedInputs.Clear();
         localPredictedInputs.AddRange(replaySamples);
+        RecordLocalPredictionAppliedCorrection(preReconcilePosition, preReconcileRotation, localTransform.position, localTransform.rotation);
         pendingLocalReconciliation = null;
     }
 
@@ -577,8 +929,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         localPlayerId = Backend.Client.Session != null ? Backend.Client.Session.player_id : localPlayerId;
         CacheMatchPlayers(matchInfo.players);
         ConfigureLocalAuthorityMode(matchInfo);
-        ApplyLocalSpawnIfReady(force: true);
+        ApplyLocalSpawnIfReady();
         EnsureRemotePlayersSpawned();
+        if (ShouldFetchMatchSetup(matchInfo))
+            _ = EnsureMatchSetupAsync();
     }
 
     private void HandleMatchStateReceived(BackendMatchStateMessage state)
@@ -601,10 +955,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 seenPlayers.Add(playerState.player_id);
                 if (string.Equals(playerState.player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
                 {
+                    UpdateServerInputDebugState(playerState);
                     if (localAuthoritativeMode)
                     {
                         if (IsUsingLocalPrediction())
-                            ReconcileLocalPredictedState(playerState);
+                            ReconcileLocalPredictedState(state.server_time, playerState);
                         else
                             QueueLocalAuthoritativeState(state.server_time, playerState);
                     }
@@ -619,6 +974,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     playerState.VelocityVector,
                     playerState.AngularVelocityVector,
                     playerState.wheel_states);
+                proxy.UpdateServerDebugState(state.server_time, playerState);
             }
         }
 
@@ -804,24 +1160,60 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         spawnManager.ApplyLocalSpawn(localPlayerId, force);
     }
 
-    private async Task EnsureMatchSetupAsync()
+    private async Task EnsureMatchSetupAsync(bool force = false)
     {
-        if (matchSetupRequested || string.IsNullOrWhiteSpace(activeMatchId))
+        if (string.IsNullOrWhiteSpace(activeMatchId) || matchSetupRequestInFlight)
             return;
 
-        matchSetupRequested = true;
+        if (!force && !ShouldFetchMatchSetup(Backend.Client.CurrentMatchInfo))
+            return;
+
+        double localNow = Time.unscaledTimeAsDouble;
+        if (!force &&
+            lastMatchSetupAttemptLocalTime > 0.0d &&
+            localNow - lastMatchSetupAttemptLocalTime < Math.Max(0.1f, matchSetupRetryDelay))
+        {
+            return;
+        }
+
+        matchSetupRequestInFlight = true;
+        lastMatchSetupAttemptLocalTime = localNow;
         try
         {
             BackendMatchInfo info = await Backend.Client.GetMatchAsync(activeMatchId);
             CacheMatchPlayers(info != null ? info.players : null);
             ConfigureLocalAuthorityMode(info);
-            ApplyLocalSpawnIfReady(force: true);
+            ApplyLocalSpawnIfReady();
             EnsureRemotePlayersSpawned();
         }
         catch (Exception ex)
         {
             Debug.LogWarning("MultiplayerMatchRuntime: failed to fetch match setup. " + ex.Message, this);
         }
+        finally
+        {
+            matchSetupRequestInFlight = false;
+        }
+    }
+
+    private bool ShouldFetchMatchSetup(BackendMatchInfo matchInfo)
+    {
+        if (string.IsNullOrWhiteSpace(activeMatchId))
+            return false;
+
+        if (matchInfo == null)
+            return true;
+
+        if (!string.Equals(matchInfo.match_id, activeMatchId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (matchInfo.tick_rate <= 0)
+            return true;
+
+        if (matchInfo.players == null || matchInfo.players.Count == 0)
+            return true;
+
+        return false;
     }
 
     private void EnsureRemotePlayersSpawned()
@@ -984,7 +1376,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             localAuthoritativeSnapshots.Clear();
             localInterpolatedWheelStates.Clear();
             localPredictedInputs.Clear();
-            pendingLocalReconciliation = null;
+            ResetLocalPredictionReconciliationState();
             ResetLocalSnapshotTimeline();
 
             if (controller != null && !localControllerModeOverridden)
@@ -1037,7 +1429,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     body.angularVelocity = Vector3.zero;
                     body.isKinematic = true;
                     body.useGravity = false;
-                    body.interpolation = RigidbodyInterpolation.Interpolate;
+                    body.interpolation = RigidbodyInterpolation.None;
                 }
 
                 body.maxDepenetrationVelocity = maxDepenetrationVelocity;
@@ -1056,17 +1448,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             }
 
             if (IsUsingLocalPrediction())
+            {
                 EnsureLocalPredictionCameraTarget();
+                EnsureLocalPresentationLayer();
+            }
             else
+            {
                 DestroyLocalPredictionCameraTarget();
+                DestroyLocalPresentationLayer();
+            }
         }
         else
         {
             localAuthoritativeSnapshots.Clear();
             localInterpolatedWheelStates.Clear();
             localPredictedInputs.Clear();
-            pendingLocalReconciliation = null;
+            ResetLocalPredictionReconciliationState();
             ResetLocalSnapshotTimeline();
+            ClearLocalPoseGizmo();
 
             if (controller != null && localControllerModeOverridden)
             {
@@ -1092,6 +1491,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             }
 
             DestroyLocalPredictionCameraTarget();
+            DestroyLocalPresentationLayer();
         }
     }
 
@@ -1122,8 +1522,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         localAuthoritativeSnapshots.Clear();
         localInterpolatedWheelStates.Clear();
         localPredictedInputs.Clear();
-        pendingLocalReconciliation = null;
+        ResetLocalPredictionReconciliationState();
         ResetLocalSnapshotTimeline();
+        ClearLocalPoseGizmo();
         if (localPhysicsSimulationModeOverridden)
         {
             Physics.simulationMode = localPhysicsSimulationModeBeforeOverride;
@@ -1135,13 +1536,662 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             localFixedDeltaTimeOverridden = false;
         }
         DestroyLocalPredictionCameraTarget();
+        DestroyLocalPresentationLayer();
         localAuthoritativeMode = false;
+    }
+
+    private void ResetLocalPredictionReconciliationState()
+    {
+        pendingLocalReconciliation = null;
+        localPredictionCorrectionCandidateSequence = -1;
+        localPredictionCorrectionConsecutiveCount = 0;
+        localPredictionAckMatchedPositionError = 0.0f;
+        localPredictionAckMatchedRotationError = 0.0f;
+        localPredictionLastAppliedCorrectionDistance = 0.0f;
+        localPredictionLastAppliedCorrectionRotation = 0.0f;
+        ResetLocalPredictionCameraCorrection();
+    }
+
+    private void ResetLocalPredictionCameraCorrection()
+    {
+        localPredictionCameraCorrectionOffset = Vector3.zero;
+        localPredictionCameraCorrectionVelocity = Vector3.zero;
+        localPredictionCameraCorrectionRotationOffset = Quaternion.identity;
+    }
+
+    private void ResetLocalPredictionCorrectionCandidate()
+    {
+        localPredictionCorrectionCandidateSequence = -1;
+        localPredictionCorrectionConsecutiveCount = 0;
+    }
+
+    private bool EnsureLocalPresentationLayer()
+    {
+        if (!IsUsingLocalPresentationLayer())
+            return false;
+
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        if (localPlayerCar == null)
+        {
+            DestroyLocalPresentationLayer();
+            return false;
+        }
+
+        RefreshLocalBindings();
+
+        Transform sourceBody = localPlayerCar.transform.Find("Body");
+        if (ShouldRebuildLocalPresentationLayer(sourceBody))
+            RebuildLocalPresentationLayer(sourceBody);
+
+        return localPresentationRoot != null;
+    }
+
+    private bool ShouldRebuildLocalPresentationLayer(Transform sourceBody)
+    {
+        if (localPresentationRoot == null)
+            return true;
+
+        if (localPresentationSourceBody != sourceBody)
+            return true;
+
+        if (sourceBody != null && localPresentationBodyBindings.Count == 0)
+            return true;
+
+        if (sourceBody == null && localPresentationBodyBindings.Count > 0)
+            return true;
+
+        if (localPresentationWheelBindings.Count != localWheelBindings.Count)
+            return true;
+
+        for (int i = 0; i < localPresentationBodyBindings.Count; i++)
+        {
+            LocalPresentationTransformBinding binding = localPresentationBodyBindings[i];
+            if (binding == null || binding.Source == null || binding.Clone == null)
+                return true;
+        }
+
+        for (int i = 0; i < localPresentationWheelBindings.Count; i++)
+        {
+            LocalPresentationWheelBinding binding = localPresentationWheelBindings[i];
+            if (binding == null || binding.Source != localWheelBindings[i].VisualRoot || binding.Clone == null)
+                return true;
+        }
+
+        return false;
+    }
+
+    private void RebuildLocalPresentationLayer(Transform sourceBody)
+    {
+        DestroyLocalPresentationLayer();
+
+        if (localPlayerCar == null)
+            return;
+
+        GameObject rootObject = new GameObject("LocalPresentationLayer");
+        localPresentationRoot = rootObject.transform;
+        localPresentationRoot.SetParent(localPlayerCar.transform, false);
+        localPresentationRoot.localPosition = Vector3.zero;
+        localPresentationRoot.localRotation = Quaternion.identity;
+        localPresentationRoot.localScale = Vector3.one;
+        localPresentationSourceBody = sourceBody;
+
+        if (sourceBody != null)
+        {
+            GameObject bodyClone = Instantiate(sourceBody.gameObject, localPresentationRoot);
+            bodyClone.name = "PresentationBody";
+            bodyClone.transform.localPosition = sourceBody.localPosition;
+            bodyClone.transform.localRotation = sourceBody.localRotation;
+            bodyClone.transform.localScale = sourceBody.localScale;
+            StripLocalPresentationClone(bodyClone);
+            BuildLocalPresentationBodyBindings(sourceBody, bodyClone.transform);
+        }
+
+        for (int i = 0; i < localWheelBindings.Count; i++)
+        {
+            LocalWheelBinding binding = localWheelBindings[i];
+            if (binding == null || binding.VisualRoot == null)
+                continue;
+
+            GameObject wheelClone = Instantiate(binding.VisualRoot.gameObject, localPresentationRoot);
+            wheelClone.name = (binding.Collider != null ? binding.Collider.name : binding.VisualRoot.name) + "_Presentation";
+            StripLocalPresentationClone(wheelClone);
+            localPresentationWheelBindings.Add(new LocalPresentationWheelBinding
+            {
+                Source = binding.VisualRoot,
+                Clone = wheelClone.transform
+            });
+        }
+
+        CacheLocalPresentationHiddenRenderers(sourceBody);
+        SetLocalPresentationHiddenRenderers(true);
+        TickLocalPresentationLayer();
+    }
+
+    private void BuildLocalPresentationBodyBindings(Transform sourceRoot, Transform cloneRoot)
+    {
+        localPresentationBodyBindings.Clear();
+        if (sourceRoot == null || cloneRoot == null)
+            return;
+
+        var pending = new Queue<(Transform Source, Transform Clone)>();
+        pending.Enqueue((sourceRoot, cloneRoot));
+        while (pending.Count > 0)
+        {
+            (Transform source, Transform clone) = pending.Dequeue();
+            var binding = new LocalPresentationTransformBinding
+            {
+                Source = source,
+                Clone = clone,
+                SourceRenderer = source != null ? source.GetComponent<Renderer>() : null,
+                CloneRenderer = clone != null ? clone.GetComponent<Renderer>() : null,
+                SourceMeshFilter = source != null ? source.GetComponent<MeshFilter>() : null,
+                CloneMeshFilter = clone != null ? clone.GetComponent<MeshFilter>() : null,
+                SourceSkinnedMesh = source != null ? source.GetComponent<SkinnedMeshRenderer>() : null,
+                CloneSkinnedMesh = clone != null ? clone.GetComponent<SkinnedMeshRenderer>() : null
+            };
+            localPresentationBodyBindings.Add(binding);
+            SyncLocalPresentationBodyBinding(binding);
+            if (binding.SourceRenderer != null && binding.CloneRenderer != null)
+                binding.CloneRenderer.materials = binding.SourceRenderer.materials;
+
+            int childCount = Mathf.Min(source.childCount, clone.childCount);
+            for (int i = 0; i < childCount; i++)
+                pending.Enqueue((source.GetChild(i), clone.GetChild(i)));
+        }
+    }
+
+    private void CacheLocalPresentationHiddenRenderers(Transform sourceBody)
+    {
+        localPresentationHiddenRenderers.Clear();
+        var seenRenderers = new HashSet<Renderer>();
+
+        void CacheRenderersFrom(Transform source)
+        {
+            if (source == null)
+                return;
+
+            Renderer[] renderers = source.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer renderer = renderers[i];
+                if (renderer == null || !seenRenderers.Add(renderer))
+                    continue;
+
+                localPresentationHiddenRenderers.Add(new LocalPresentationHiddenRendererState
+                {
+                    Renderer = renderer,
+                    ForceRenderingOffBefore = renderer.forceRenderingOff
+                });
+            }
+        }
+
+        CacheRenderersFrom(sourceBody);
+        for (int i = 0; i < localWheelBindings.Count; i++)
+        {
+            LocalWheelBinding binding = localWheelBindings[i];
+            CacheRenderersFrom(binding != null ? binding.VisualRoot : null);
+        }
+    }
+
+    private void SetLocalPresentationHiddenRenderers(bool hidden)
+    {
+        for (int i = 0; i < localPresentationHiddenRenderers.Count; i++)
+        {
+            LocalPresentationHiddenRendererState state = localPresentationHiddenRenderers[i];
+            if (state.Renderer == null)
+                continue;
+
+            state.Renderer.forceRenderingOff = hidden || state.ForceRenderingOffBefore;
+        }
+    }
+
+    private void TickLocalPresentationLayer()
+    {
+        if (!EnsureLocalPresentationLayer() || localPlayerCar == null || localPresentationRoot == null)
+            return;
+
+        Transform root = localPlayerCar.transform;
+        localPresentationRoot.localPosition = Quaternion.Inverse(root.rotation) * localPredictionCameraCorrectionOffset;
+        localPresentationRoot.localRotation = localPredictionCameraCorrectionRotationOffset;
+        localPresentationRoot.localScale = Vector3.one;
+
+        for (int i = 0; i < localPresentationBodyBindings.Count; i++)
+            SyncLocalPresentationBodyBinding(localPresentationBodyBindings[i]);
+
+        for (int i = 0; i < localPresentationWheelBindings.Count; i++)
+            SyncLocalPresentationWheelBinding(root, localPresentationWheelBindings[i]);
+    }
+
+    private void SyncLocalPresentationBodyBinding(LocalPresentationTransformBinding binding)
+    {
+        if (binding == null || binding.Source == null || binding.Clone == null)
+            return;
+
+        bool activeSelf = binding.Source.gameObject.activeSelf;
+        if (binding.Clone.gameObject.activeSelf != activeSelf)
+            binding.Clone.gameObject.SetActive(activeSelf);
+        if (!activeSelf)
+            return;
+
+        binding.Clone.localPosition = binding.Source.localPosition;
+        binding.Clone.localRotation = binding.Source.localRotation;
+        binding.Clone.localScale = binding.Source.localScale;
+
+        if (binding.SourceMeshFilter != null &&
+            binding.CloneMeshFilter != null &&
+            binding.CloneMeshFilter.sharedMesh != binding.SourceMeshFilter.sharedMesh)
+        {
+            binding.CloneMeshFilter.sharedMesh = binding.SourceMeshFilter.sharedMesh;
+        }
+
+        if (binding.SourceSkinnedMesh != null && binding.CloneSkinnedMesh != null)
+        {
+            if (binding.CloneSkinnedMesh.sharedMesh != binding.SourceSkinnedMesh.sharedMesh)
+                binding.CloneSkinnedMesh.sharedMesh = binding.SourceSkinnedMesh.sharedMesh;
+            binding.CloneSkinnedMesh.enabled = binding.SourceSkinnedMesh.enabled;
+        }
+
+        if (binding.SourceRenderer != null && binding.CloneRenderer != null)
+            binding.CloneRenderer.enabled = binding.SourceRenderer.enabled;
+    }
+
+    private static void SyncLocalPresentationWheelBinding(Transform root, LocalPresentationWheelBinding binding)
+    {
+        if (root == null || binding == null || binding.Source == null || binding.Clone == null)
+            return;
+
+        binding.Clone.gameObject.SetActive(binding.Source.gameObject.activeSelf);
+        if (!binding.Clone.gameObject.activeSelf)
+            return;
+
+        binding.Clone.localPosition = root.InverseTransformPoint(binding.Source.position);
+        binding.Clone.localRotation = Quaternion.Inverse(root.rotation) * binding.Source.rotation;
+        binding.Clone.localScale = binding.Source.lossyScale;
+    }
+
+    private void DestroyLocalPresentationLayer()
+    {
+        SetLocalPresentationHiddenRenderers(false);
+        localPresentationHiddenRenderers.Clear();
+        localPresentationSourceBody = null;
+        localPresentationBodyBindings.Clear();
+        localPresentationWheelBindings.Clear();
+
+        if (localPresentationRoot != null)
+            Destroy(localPresentationRoot.gameObject);
+
+        localPresentationRoot = null;
+    }
+
+    private static void StripLocalPresentationClone(GameObject root)
+    {
+        if (root == null)
+            return;
+
+        foreach (Collider collider in root.GetComponentsInChildren<Collider>(true))
+            UnityEngine.Object.Destroy(collider);
+        foreach (WheelCollider wheelCollider in root.GetComponentsInChildren<WheelCollider>(true))
+            UnityEngine.Object.Destroy(wheelCollider);
+        foreach (Rigidbody body in root.GetComponentsInChildren<Rigidbody>(true))
+            UnityEngine.Object.Destroy(body);
+        foreach (Joint joint in root.GetComponentsInChildren<Joint>(true))
+            UnityEngine.Object.Destroy(joint);
+        foreach (MonoBehaviour behaviour in root.GetComponentsInChildren<MonoBehaviour>(true))
+            UnityEngine.Object.Destroy(behaviour);
+        foreach (AudioSource audioSource in root.GetComponentsInChildren<AudioSource>(true))
+            UnityEngine.Object.Destroy(audioSource);
+        foreach (ParticleSystem particleSystem in root.GetComponentsInChildren<ParticleSystem>(true))
+            UnityEngine.Object.Destroy(particleSystem);
     }
 
     private void ResetLocalSnapshotTimeline()
     {
         localSnapshotTimelineInitialized = false;
         localSnapshotServerToLocalOffset = 0.0d;
+        localSnapshotTimelineLastSampleLocalTime = 0.0d;
+    }
+
+    private void EnsureInputOverlayStyles()
+    {
+        if (inputOverlayBoxStyle == null)
+        {
+            inputOverlayBoxStyle = new GUIStyle(GUI.skin.box)
+            {
+                alignment = TextAnchor.UpperLeft,
+                padding = new RectOffset(10, 10, 10, 10)
+            };
+        }
+
+        if (inputOverlayTitleStyle == null)
+        {
+            inputOverlayTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontStyle = FontStyle.Bold,
+                fontSize = 13
+            };
+        }
+
+        if (inputOverlayHeaderStyle == null)
+        {
+            inputOverlayHeaderStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft
+            };
+        }
+
+        if (inputOverlayLabelStyle == null)
+        {
+            inputOverlayLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleLeft
+            };
+        }
+
+        if (inputOverlayValueStyle == null)
+        {
+            inputOverlayValueStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                richText = false
+            };
+        }
+    }
+
+    private void DrawInputOverlayRow(
+        float labelX,
+        float clientX,
+        float serverX,
+        float valueWidth,
+        float y,
+        string label,
+        string clientValue,
+        string serverValue)
+    {
+        GUI.Label(new Rect(labelX, y, 140.0f, 18.0f), label, inputOverlayLabelStyle);
+        GUI.Label(new Rect(clientX, y, valueWidth, 18.0f), clientValue, inputOverlayValueStyle);
+        GUI.Label(new Rect(serverX, y, valueWidth, 18.0f), serverValue, inputOverlayValueStyle);
+    }
+
+    private void DrawOverlaySectionHeader(
+        float labelX,
+        float clientX,
+        float serverX,
+        float valueWidth,
+        float y,
+        string title)
+    {
+        GUI.Label(new Rect(labelX, y, 180.0f, 18.0f), title, inputOverlayHeaderStyle);
+        GUI.Label(new Rect(clientX, y, valueWidth, 18.0f), "Client", inputOverlayHeaderStyle);
+        GUI.Label(new Rect(serverX, y, valueWidth, 18.0f), "Server", inputOverlayHeaderStyle);
+    }
+
+    private void DrawOverlaySingleRow(float x, float y, string label, string value)
+    {
+        GUI.Label(new Rect(x, y, 96.0f, 18.0f), label, inputOverlayLabelStyle);
+        GUI.Label(new Rect(x + 74.0f, y, Mathf.Max(300.0f, inputOverlayWidth - 96.0f), 18.0f), value, inputOverlayValueStyle);
+    }
+
+    private LocalVehicleOverlaySnapshot CaptureLocalClientVehicleOverlaySnapshot()
+    {
+        LocalVehicleOverlaySnapshot snapshot = default;
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        if (localPlayerCar == null)
+            return snapshot;
+
+        CarControllerBase controller = localPlayerCar.Controller != null
+            ? localPlayerCar.Controller
+            : localPlayerCar.GetComponent<CarControllerBase>();
+        Rigidbody body = localPlayerCar.GetComponent<Rigidbody>();
+        CarControllerSimulationState simulationState = controller != null ? controller.CaptureSimulationState() : default;
+
+        snapshot.Available = controller != null || body != null;
+        snapshot.Position = localPlayerCar.transform.position;
+        snapshot.Rotation = localPlayerCar.transform.rotation;
+        snapshot.Velocity = body != null ? body.linearVelocity : Vector3.zero;
+        snapshot.AngularVelocity = body != null ? body.angularVelocity : Vector3.zero;
+        snapshot.WheelVisualCount = localWheelBindings.Count;
+        snapshot.SpeedKph = controller != null ? controller.SpeedKph : snapshot.Velocity.magnitude * 3.6f;
+        snapshot.CurrentGear = controller != null ? controller.CurrentGear : 0;
+        snapshot.RequestedGear = simulationState.requestedGear;
+        snapshot.CurrentRpm = controller != null ? controller.CurrentRpm : 0.0f;
+        snapshot.ShiftTimer = simulationState.shiftTimer;
+        snapshot.ShiftState = simulationState.shiftState;
+        snapshot.MotorTorque = controller != null ? controller.LastMotorTorque : 0.0f;
+        snapshot.BrakeTorque = controller != null ? controller.LastBrakeTorque : 0.0f;
+        snapshot.RearBrakeTorque = controller != null ? controller.LastRearBrakeTorque : 0.0f;
+        snapshot.SteerAngle = controller != null ? controller.LastSteerAngle : simulationState.currentSteerAngle;
+        snapshot.NitroAmount = simulationState.nitroAmount;
+        snapshot.NitroActive = simulationState.nitroActive;
+        snapshot.NitroInitialized = simulationState.nitroInitialized;
+        snapshot.GroundedWheels = controller != null ? controller.GroundedWheelCount : 0;
+        snapshot.WheelCount = controller != null ? controller.WheelCount : localWheelBindings.Count;
+        snapshot.InputEnabled = controller != null && controller.InputEnabled;
+        snapshot.Sleeping = controller != null && controller.IsRigidBodySleeping;
+        return snapshot;
+    }
+
+    private bool TryGetPrimaryRemoteOverlayDebugSnapshot(out RemoteOverlayDebugSnapshot snapshot)
+    {
+        foreach (RemotePlayerProxy proxy in remotePlayers.Values)
+        {
+            if (proxy != null && proxy.TryGetOverlayDebugSnapshot(out snapshot))
+                return true;
+        }
+
+        snapshot = default;
+        return false;
+    }
+
+    private void UpdateLocalInputDebugState()
+    {
+        BackendCarControlInputPayload input = CaptureLocalInput();
+        localClientInputDebug = CreateInputDebugSnapshot(
+            inputSequence,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            0L,
+            input);
+    }
+
+    private void UpdateServerInputDebugState(BackendMatchPlayerState playerState)
+    {
+        localServerInputDebug = CreateInputDebugSnapshot(
+            playerState != null ? playerState.ack_input_seq : -1,
+            playerState != null ? playerState.client_time : 0L,
+            playerState != null ? playerState.server_received_time : 0L,
+            playerState != null ? playerState.input : null);
+    }
+
+    private void ClearInputDebugState()
+    {
+        localClientInputDebug = default;
+        localServerInputDebug = default;
+    }
+
+    private static InputDebugSnapshot CreateInputDebugSnapshot(
+        int sequence,
+        long clientTimeMs,
+        long serverReceivedTimeMs,
+        BackendCarControlInputPayload input)
+    {
+        return new InputDebugSnapshot
+        {
+            Available = input != null,
+            Sequence = sequence,
+            ClientTimeMs = clientTimeMs,
+            ServerReceivedTimeMs = serverReceivedTimeMs,
+            Throttle = input != null ? input.throttle : 0.0f,
+            Steer = input != null ? input.steer : 0.0f,
+            Brake = input != null && input.brake,
+            Handbrake = input != null && input.handbrake,
+            Nitro = input != null && input.nitro
+        };
+    }
+
+    private static string FormatInputSequence(InputDebugSnapshot snapshot)
+    {
+        return snapshot.Available ? snapshot.Sequence.ToString() : "-";
+    }
+
+    private static string FormatInputFloat(float value, bool available)
+    {
+        return available ? value.ToString("0.000") : "-";
+    }
+
+    private static string FormatInputBool(bool value, bool available)
+    {
+        return available ? (value ? "1" : "0") : "-";
+    }
+
+    private static string FormatInputLong(long value, bool available)
+    {
+        return available ? value.ToString() : "-";
+    }
+
+    private static string FormatSequenceGap(InputDebugSnapshot client, InputDebugSnapshot server)
+    {
+        if (!client.Available || !server.Available)
+            return "-";
+
+        return Mathf.Max(0, client.Sequence - server.Sequence).ToString();
+    }
+
+    private static string FormatAckAgeMilliseconds(InputDebugSnapshot client, InputDebugSnapshot server)
+    {
+        if (!client.Available || !server.Available || client.ClientTimeMs <= 0L || server.ClientTimeMs <= 0L)
+            return "-";
+
+        long delta = Math.Max(0L, client.ClientTimeMs - server.ClientTimeMs);
+        return delta.ToString();
+    }
+
+    private static string FormatVector3(Vector3 value, bool available)
+    {
+        return available
+            ? string.Format("{0,7:0.00} {1,7:0.00} {2,7:0.00}", value.x, value.y, value.z)
+            : "-";
+    }
+
+    private static string FormatAvailableFloat(float value, bool available)
+    {
+        return available ? value.ToString("0.00") : "-";
+    }
+
+    private static string FormatGear(int currentGear, int requestedGear, bool available)
+    {
+        return available ? currentGear.ToString() + " / " + requestedGear.ToString() : "-";
+    }
+
+    private static string FormatTorqueSet(float motorTorque, float brakeTorque, float rearBrakeTorque, bool available)
+    {
+        return available
+            ? "M " + motorTorque.ToString("0") + "  B " + brakeTorque.ToString("0") + "  RB " + rearBrakeTorque.ToString("0")
+            : "-";
+    }
+
+    private static string FormatSteerNitro(float steerAngle, float nitroAmount, bool nitroActive, bool available)
+    {
+        return available
+            ? "S " + steerAngle.ToString("0.0") + "  N " + nitroAmount.ToString("0.00") + "  A " + (nitroActive ? "1" : "0")
+            : "-";
+    }
+
+    private static string FormatGroundWheels(int groundedWheels, int wheelCount, bool available)
+    {
+        return available ? groundedWheels.ToString() + " / " + wheelCount.ToString() : "-";
+    }
+
+    private static string FormatInputSleep(bool inputEnabled, bool sleeping, bool available)
+    {
+        return available ? "I " + (inputEnabled ? "1" : "0") + "  S " + (sleeping ? "1" : "0") : "-";
+    }
+
+    private static string FormatInputSummary(InputDebugSnapshot snapshot)
+    {
+        return snapshot.Available
+            ? "seq " + snapshot.Sequence +
+              "  t " + snapshot.Throttle.ToString("0.00") +
+              "  s " + snapshot.Steer.ToString("0.00") +
+              "  bhn " + (snapshot.Brake ? "1" : "0") + (snapshot.Handbrake ? "1" : "0") + (snapshot.Nitro ? "1" : "0")
+            : "-";
+    }
+
+    private static string FormatAckMatchError(float positionError, float rotationError)
+    {
+        return "P " + positionError.ToString("0.00") + "  R " + rotationError.ToString("0.00");
+    }
+
+    private static string FormatCorrectionGate(int consecutiveCount, int requiredConfirmations)
+    {
+        return consecutiveCount.ToString() + " / " + Mathf.Max(1, requiredConfirmations).ToString();
+    }
+
+    private void UpdateLocalServerState(long matchServerTimeMs, BackendMatchPlayerState playerState)
+    {
+        if (playerState == null)
+            return;
+
+        localServerPoseAvailable = true;
+        localServerPosition = playerState.PositionVector;
+        localServerRotation = Quaternion.Euler(playerState.RotationVector);
+        localServerVelocity = playerState.VelocityVector;
+        localServerAngularVelocity = playerState.AngularVelocityVector;
+        localServerWheelStateCount = playerState.wheel_states != null ? playerState.wheel_states.Count : 0;
+        localServerVehicleDebug = playerState.debug;
+        localServerSnapshotReceivedLocalTime = Time.unscaledTimeAsDouble;
+        localServerSnapshotServerTimeMs = matchServerTimeMs;
+    }
+
+    private void ClearLocalPoseGizmo()
+    {
+        localServerPoseAvailable = false;
+        localServerPosition = Vector3.zero;
+        localServerRotation = Quaternion.identity;
+        localServerVelocity = Vector3.zero;
+        localServerAngularVelocity = Vector3.zero;
+        localServerWheelStateCount = 0;
+        localServerVehicleDebug = null;
+        localServerSnapshotReceivedLocalTime = 0.0d;
+        localServerSnapshotServerTimeMs = 0L;
+    }
+
+    private static void DrawPosePairGizmo(
+        Vector3 clientPosition,
+        Quaternion clientRotation,
+        Vector3 serverPosition,
+        Quaternion serverRotation,
+        Color clientColor,
+        Color serverColor,
+        float markerRadius,
+        float axisLength)
+    {
+        Color linkColor = Color.Lerp(clientColor, serverColor, 0.5f);
+        Gizmos.color = linkColor;
+        Gizmos.DrawLine(serverPosition, clientPosition);
+        DrawPoseGizmo(serverPosition, serverRotation, serverColor, markerRadius, axisLength, true);
+        DrawPoseGizmo(clientPosition, clientRotation, clientColor, markerRadius, axisLength, false);
+    }
+
+    private static void DrawPoseGizmo(
+        Vector3 position,
+        Quaternion rotation,
+        Color color,
+        float markerRadius,
+        float axisLength,
+        bool wireMarker)
+    {
+        Gizmos.color = color;
+        Vector3 markerSize = Vector3.one * (markerRadius * 2.0f);
+        if (wireMarker)
+            Gizmos.DrawWireCube(position, markerSize);
+        else
+            Gizmos.DrawSphere(position, markerRadius);
+
+        Gizmos.DrawLine(position, position + rotation * (Vector3.forward * axisLength));
+        Gizmos.DrawLine(position, position + rotation * (Vector3.right * (axisLength * 0.8f)));
+        Gizmos.DrawLine(position, position + rotation * (Vector3.up * (axisLength * 0.65f)));
     }
 
     private void UpdateLocalPredictionFixedDeltaTime(BackendMatchInfo matchInfo)
@@ -1169,11 +2219,12 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             Time.fixedDeltaTime = desiredFixedDeltaTime;
     }
 
-    private void ReconcileLocalPredictedState(BackendMatchPlayerState playerState)
+    private void ReconcileLocalPredictedState(long matchServerTimeMs, BackendMatchPlayerState playerState)
     {
         if (playerState == null)
             return;
 
+        UpdateLocalServerState(matchServerTimeMs, playerState);
         RefreshLocalBindings();
         if (localVehicleSyncState == null)
             return;
@@ -1181,6 +2232,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         LocalPredictedInputSample acknowledgedSample = FindPredictedInputSample(playerState.ack_input_seq);
         if (acknowledgedSample == null || acknowledgedSample.PredictedState == null)
         {
+            ResetLocalPredictionCorrectionCandidate();
             TrimLocalPredictedInputs(playerState.ack_input_seq);
             return;
         }
@@ -1188,15 +2240,44 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         ServerSyncedComponentState authoritativeState = localVehicleSyncState.CreateState(playerState);
         ServerSyncedComponentState predictedState = acknowledgedSample.PredictedState.DeepClone();
         if (authoritativeState == null || predictedState == null)
+        {
+            ResetLocalPredictionCorrectionCandidate();
             return;
+        }
 
         float positionError = VehicleServerSyncState.ComputePositionError(authoritativeState, predictedState);
         float rotationError = VehicleServerSyncState.ComputeRotationErrorDegrees(authoritativeState, predictedState);
+        localPredictionAckMatchedPositionError = positionError;
+        localPredictionAckMatchedRotationError = rotationError;
 
         if (positionError <= localPredictionPositionDeadzone && rotationError <= localPredictionRotationDeadzone)
         {
+            ResetLocalPredictionCorrectionCandidate();
             TrimLocalPredictedInputs(playerState.ack_input_seq);
             return;
+        }
+
+        bool requiresImmediateCorrection =
+            positionError >= Mathf.Max(localPredictionPositionDeadzone, localPredictionHardPositionDeadzone) ||
+            rotationError >= Mathf.Max(localPredictionRotationDeadzone, localPredictionHardRotationDeadzone);
+
+        if (!requiresImmediateCorrection)
+        {
+            if (playerState.ack_input_seq != localPredictionCorrectionCandidateSequence)
+            {
+                localPredictionCorrectionCandidateSequence = playerState.ack_input_seq;
+                localPredictionCorrectionConsecutiveCount++;
+            }
+
+            if (localPredictionCorrectionConsecutiveCount < Mathf.Max(1, localPredictionSoftCorrectionConfirmations))
+            {
+                TrimLocalPredictedInputs(playerState.ack_input_seq);
+                return;
+            }
+        }
+        else
+        {
+            ResetLocalPredictionCorrectionCandidate();
         }
 
         if (pendingLocalReconciliation != null &&
@@ -1205,6 +2286,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return;
         }
 
+        ResetLocalPredictionCorrectionCandidate();
         pendingLocalReconciliation = new PendingLocalReconciliation
         {
             AcknowledgedSequence = playerState.ack_input_seq,
@@ -1218,8 +2300,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return;
 
         Transform localTransform = localPlayerCar.transform;
-        Vector3 desiredPosition = localTransform.position;
-        Quaternion desiredRotation = localTransform.rotation;
+        TickLocalPredictionCameraCorrection(deltaTime);
+        Vector3 desiredPosition = localTransform.position + localPredictionCameraCorrectionOffset;
+        Quaternion desiredRotation = localTransform.rotation * localPredictionCameraCorrectionRotationOffset;
 
         if (!localPredictionCameraInitialized)
         {
@@ -1300,6 +2383,84 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         localPredictionCameraVelocity = Vector3.zero;
         localPredictionCameraRotation = Quaternion.identity;
         localPredictionCameraInitialized = false;
+        ResetLocalPredictionCameraCorrection();
+    }
+
+    private void RecordLocalPredictionAppliedCorrection(
+        Vector3 preReconcilePosition,
+        Quaternion preReconcileRotation,
+        Vector3 postReconcilePosition,
+        Quaternion postReconcileRotation)
+    {
+        localPredictionLastAppliedCorrectionDistance = Vector3.Distance(preReconcilePosition, postReconcilePosition);
+        localPredictionLastAppliedCorrectionRotation = Quaternion.Angle(preReconcileRotation, postReconcileRotation);
+
+        if (localPredictionLastAppliedCorrectionDistance <= 0.0001f &&
+            localPredictionLastAppliedCorrectionRotation <= 0.01f)
+        {
+            return;
+        }
+
+        Vector3 correctionOffset = preReconcilePosition - postReconcilePosition;
+        if (localPredictionCameraCorrectionMaxDistance > 0.0f)
+            correctionOffset = Vector3.ClampMagnitude(correctionOffset, localPredictionCameraCorrectionMaxDistance);
+
+        localPredictionCameraCorrectionOffset += correctionOffset;
+        if (localPredictionCameraCorrectionMaxDistance > 0.0f)
+            localPredictionCameraCorrectionOffset = Vector3.ClampMagnitude(localPredictionCameraCorrectionOffset, localPredictionCameraCorrectionMaxDistance);
+
+        Quaternion correctionRotationOffset = Quaternion.Inverse(postReconcileRotation) * preReconcileRotation;
+        float correctionAngle = Quaternion.Angle(Quaternion.identity, correctionRotationOffset);
+        if (localPredictionCameraCorrectionMaxRotation > 0.0f && correctionAngle > localPredictionCameraCorrectionMaxRotation)
+        {
+            float t = localPredictionCameraCorrectionMaxRotation / Mathf.Max(0.0001f, correctionAngle);
+            correctionRotationOffset = Quaternion.Slerp(Quaternion.identity, correctionRotationOffset, t);
+        }
+
+        localPredictionCameraCorrectionRotationOffset =
+            correctionRotationOffset * localPredictionCameraCorrectionRotationOffset;
+    }
+
+    private void TickLocalPredictionCameraCorrection(float deltaTime)
+    {
+        float safeDeltaTime = Mathf.Max(0.0001f, deltaTime);
+        if (localPredictionCameraCorrectionSmoothTime > 0.0f)
+        {
+            localPredictionCameraCorrectionOffset = Vector3.SmoothDamp(
+                localPredictionCameraCorrectionOffset,
+                Vector3.zero,
+                ref localPredictionCameraCorrectionVelocity,
+                localPredictionCameraCorrectionSmoothTime,
+                Mathf.Infinity,
+                safeDeltaTime);
+        }
+        else
+        {
+            localPredictionCameraCorrectionOffset = Vector3.zero;
+            localPredictionCameraCorrectionVelocity = Vector3.zero;
+        }
+
+        if (localPredictionCameraCorrectionOffset.sqrMagnitude <= 0.000001f)
+        {
+            localPredictionCameraCorrectionOffset = Vector3.zero;
+            localPredictionCameraCorrectionVelocity = Vector3.zero;
+        }
+
+        if (localPredictionCameraCorrectionRotationSmooth > 0.0f)
+        {
+            float t = 1.0f - Mathf.Exp(-localPredictionCameraCorrectionRotationSmooth * safeDeltaTime);
+            localPredictionCameraCorrectionRotationOffset = Quaternion.Slerp(
+                localPredictionCameraCorrectionRotationOffset,
+                Quaternion.identity,
+                t);
+        }
+        else
+        {
+            localPredictionCameraCorrectionRotationOffset = Quaternion.identity;
+        }
+
+        if (Quaternion.Angle(localPredictionCameraCorrectionRotationOffset, Quaternion.identity) <= 0.05f)
+            localPredictionCameraCorrectionRotationOffset = Quaternion.identity;
     }
 
     private void QueueLocalAuthoritativeState(long matchServerTimeMs, BackendMatchPlayerState playerState)
@@ -1307,10 +2468,12 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (playerState == null)
             return;
 
+        UpdateLocalServerState(matchServerTimeMs, playerState);
         double snapshotTime = ResolveSnapshotLocalTime(
             matchServerTimeMs,
             ref localSnapshotTimelineInitialized,
-            ref localSnapshotServerToLocalOffset);
+            ref localSnapshotServerToLocalOffset,
+            ref localSnapshotTimelineLastSampleLocalTime);
         PushLocalAuthoritativeSnapshot(snapshotTime, playerState);
     }
 
@@ -1404,7 +2567,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 continue;
 
             float t = (float)((renderTime - from.LocalTime) / Math.Max(0.0001d, to.LocalTime - from.LocalTime));
-            position = Vector3.LerpUnclamped(from.Position, to.Position, t);
+            position = InterpolateSnapshotPosition(
+                from.Position,
+                from.Velocity,
+                from.LocalTime,
+                to.Position,
+                to.Velocity,
+                to.LocalTime,
+                t);
             rotation = Quaternion.SlerpUnclamped(from.Rotation, to.Rotation, t);
             InterpolateLocalWheelStates(from.WheelStates, to.WheelStates, t, wheelStateBuffer);
             return;
@@ -1432,16 +2602,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             body.maxDepenetrationVelocity = maxDepenetrationVelocity;
             if (body.isKinematic)
             {
-                if (Vector3.Distance(body.position, position) >= remoteTeleportDistance)
-                {
-                    body.position = position;
-                    body.rotation = rotation;
-                }
-                else
-                {
-                    body.MovePosition(position);
-                    body.MoveRotation(rotation);
-                }
+                body.position = position;
+                body.rotation = rotation;
             }
             else
             {
@@ -1589,20 +2751,65 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
+    private static Vector3 InterpolateSnapshotPosition(
+        Vector3 fromPosition,
+        Vector3 fromVelocity,
+        double fromTime,
+        Vector3 toPosition,
+        Vector3 toVelocity,
+        double toTime,
+        float t)
+    {
+        float clampedT = Mathf.Clamp01(t);
+        float duration = (float)Math.Max(0.0001d, toTime - fromTime);
+        float t2 = clampedT * clampedT;
+        float t3 = t2 * clampedT;
+        Vector3 tangentFrom = fromVelocity * duration;
+        Vector3 tangentTo = toVelocity * duration;
+        return (2.0f * t3 - 3.0f * t2 + 1.0f) * fromPosition +
+               (t3 - 2.0f * t2 + clampedT) * tangentFrom +
+               (-2.0f * t3 + 3.0f * t2) * toPosition +
+               (t3 - t2) * tangentTo;
+    }
+
     private static double ResolveSnapshotLocalTime(
         long matchServerTimeMs,
         ref bool timelineInitialized,
-        ref double snapshotServerToLocalOffset)
+        ref double snapshotServerToLocalOffset,
+        ref double lastSampleLocalTime)
     {
         double localNow = Time.unscaledTimeAsDouble;
         if (matchServerTimeMs <= 0)
             return localNow;
 
         double serverTime = matchServerTimeMs / 1000.0d;
+        double measuredOffset = localNow - serverTime;
         if (!timelineInitialized)
         {
-            snapshotServerToLocalOffset = localNow - serverTime;
+            snapshotServerToLocalOffset = measuredOffset;
+            lastSampleLocalTime = localNow;
             timelineInitialized = true;
+            return serverTime + snapshotServerToLocalOffset;
+        }
+
+        double sampleDt = lastSampleLocalTime > 0.0d
+            ? Math.Max(0.0001d, localNow - lastSampleLocalTime)
+            : 0.0001d;
+        lastSampleLocalTime = localNow;
+
+        double offsetError = measuredOffset - snapshotServerToLocalOffset;
+        if (Math.Abs(offsetError) >= SnapshotTimelineHardResetThresholdSeconds)
+        {
+            snapshotServerToLocalOffset = measuredOffset;
+        }
+        else
+        {
+            double alpha = 1.0d - Math.Exp(-SnapshotTimelineFilterStrength * sampleDt);
+            double correction = offsetError * alpha;
+            correction = Math.Max(
+                -SnapshotTimelineMaxCorrectionPerSampleSeconds,
+                Math.Min(SnapshotTimelineMaxCorrectionPerSampleSeconds, correction));
+            snapshotServerToLocalOffset += correction;
         }
 
         return serverTime + snapshotServerToLocalOffset;
@@ -1660,6 +2867,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         private readonly GameObject root;
         private readonly Transform transform;
+        private readonly Transform presentationRoot;
         private Rigidbody physicsBody;
         private readonly Material fallbackMaterial;
         private readonly Color fallbackColor;
@@ -1679,6 +2887,18 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         private bool collisionEnabled;
         private bool snapshotTimelineInitialized;
         private double snapshotServerToLocalOffset;
+        private double snapshotTimelineLastSampleLocalTime;
+        private bool serverPoseAvailable;
+        private Vector3 serverPosePosition;
+        private Quaternion serverPoseRotation = Quaternion.identity;
+        private Vector3 lastServerVelocity;
+        private Vector3 lastServerAngularVelocity;
+        private int lastServerWheelStateCount;
+        private BackendVehicleDebugState lastServerVehicleDebug;
+        private InputDebugSnapshot lastServerInputDebug;
+        private double lastServerSnapshotReceivedLocalTime;
+        private Vector3 presentationCorrectionPosition;
+        private Quaternion presentationCorrectionRotation = Quaternion.identity;
 
         public RemotePlayerProxy(
             string playerId,
@@ -1694,6 +2914,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             if (remoteRoot != null)
                 root.transform.SetParent(remoteRoot, false);
             transform = root.transform;
+            GameObject presentation = new GameObject("Presentation");
+            presentation.transform.SetParent(transform, false);
+            presentationRoot = presentation.transform;
             this.playerId = playerId;
             this.fallbackMaterial = fallbackMaterial;
             this.fallbackColor = fallbackColor;
@@ -1703,6 +2926,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 transform.position = matchPlayer.SpawnPositionVector;
                 transform.rotation = Quaternion.Euler(matchPlayer.SpawnRotationVector);
+                serverPoseAvailable = true;
+                serverPosePosition = transform.position;
+                serverPoseRotation = transform.rotation;
                 snapshots.Add(new RemoteSnapshot(
                     Time.unscaledTimeAsDouble,
                     transform.position,
@@ -1732,11 +2958,32 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             double snapshotTime = ResolveSnapshotLocalTime(
                 matchServerTimeMs,
                 ref snapshotTimelineInitialized,
-                ref snapshotServerToLocalOffset);
+                ref snapshotServerToLocalOffset,
+                ref snapshotTimelineLastSampleLocalTime);
             if (lastSnapshotLocalTime > 0.0d && snapshotTime - lastSnapshotLocalTime > 0.25d)
                 collisionRecoveryUntil = snapshotTime + 0.35d;
             lastSnapshotLocalTime = snapshotTime;
+            serverPoseAvailable = true;
+            serverPosePosition = position;
+            serverPoseRotation = rotation;
             PushSnapshot(snapshotTime, position, rotation, velocity, angularVelocity, ConvertWheelStates(wheelStates));
+        }
+
+        public void UpdateServerDebugState(long matchServerTimeMs, BackendMatchPlayerState playerState)
+        {
+            if (playerState == null)
+                return;
+
+            lastServerVelocity = playerState.VelocityVector;
+            lastServerAngularVelocity = playerState.AngularVelocityVector;
+            lastServerWheelStateCount = playerState.wheel_states != null ? playerState.wheel_states.Count : 0;
+            lastServerVehicleDebug = playerState.debug;
+            lastServerInputDebug = CreateInputDebugSnapshot(
+                playerState.ack_input_seq,
+                playerState.client_time,
+                playerState.server_received_time,
+                playerState.input);
+            lastServerSnapshotReceivedLocalTime = Time.unscaledTimeAsDouble;
         }
 
         public void Tick(
@@ -1747,7 +2994,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             float teleportDistance,
             float staleTimeout,
             float recoveryDelay,
-            bool allowCollisions)
+            bool allowCollisions,
+            float presentationSnapDistance,
+            float presentationSnapRotation,
+            float presentationCorrectionSmooth,
+            float presentationMaxOffset)
         {
             if (snapshots.Count == 0)
             {
@@ -1770,6 +3021,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 out desiredRotation,
                 interpolatedWheelStates);
 
+            Vector3 previousPosition = transform.position;
+            Quaternion previousRotation = transform.rotation;
+
             if (Vector3.Distance(transform.position, desiredPosition) >= teleportDistance)
             {
                 if (physicsBody != null)
@@ -1783,19 +3037,38 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 {
                     transform.SetPositionAndRotation(desiredPosition, desiredRotation);
                 }
+
+                AccumulatePresentationCorrection(
+                    previousPosition,
+                    previousRotation,
+                    desiredPosition,
+                    desiredRotation,
+                    presentationSnapDistance,
+                    presentationSnapRotation,
+                    presentationMaxOffset);
+                TickPresentationCorrection(deltaTime, presentationCorrectionSmooth);
                 return;
             }
 
             if (physicsBody != null && physicsBody.isKinematic)
             {
-                physicsBody.MovePosition(desiredPosition);
-                physicsBody.MoveRotation(desiredRotation);
+                physicsBody.position = desiredPosition;
+                physicsBody.rotation = desiredRotation;
             }
             else
             {
                 transform.SetPositionAndRotation(desiredPosition, desiredRotation);
             }
 
+            AccumulatePresentationCorrection(
+                previousPosition,
+                previousRotation,
+                desiredPosition,
+                desiredRotation,
+                presentationSnapDistance,
+                presentationSnapRotation,
+                presentationMaxOffset);
+            TickPresentationCorrection(deltaTime, presentationCorrectionSmooth);
             ApplyWheelStates(interpolatedWheelStates);
         }
 
@@ -1803,6 +3076,43 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             if (root != null)
                 UnityEngine.Object.Destroy(root);
+        }
+
+        public bool TryGetPoseGizmoState(
+            out Vector3 clientPosition,
+            out Quaternion clientRotation,
+            out Vector3 serverPosition,
+            out Quaternion serverRotation)
+        {
+            clientPosition = transform != null ? transform.position : Vector3.zero;
+            clientRotation = transform != null ? transform.rotation : Quaternion.identity;
+            serverPosition = serverPosePosition;
+            serverRotation = serverPoseRotation;
+            return serverPoseAvailable && transform != null;
+        }
+
+        public bool TryGetOverlayDebugSnapshot(out RemoteOverlayDebugSnapshot snapshot)
+        {
+            snapshot = default;
+            if (!serverPoseAvailable || transform == null)
+                return false;
+
+            snapshot.Available = true;
+            snapshot.PlayerId = playerId;
+            snapshot.ClientPosition = transform.position;
+            snapshot.ClientRotation = transform.rotation;
+            snapshot.ServerPosition = serverPosePosition;
+            snapshot.ServerRotation = serverPoseRotation;
+            snapshot.ServerVelocity = lastServerVelocity;
+            snapshot.ServerAngularVelocity = lastServerAngularVelocity;
+            snapshot.ServerWheelStateCount = lastServerWheelStateCount;
+            snapshot.ClientWheelVisualCount = wheelBindings.Count;
+            snapshot.ServerInput = lastServerInputDebug;
+            snapshot.ServerVehicleDebug = lastServerVehicleDebug;
+            snapshot.SnapshotAgeMs = lastServerSnapshotReceivedLocalTime > 0.0d
+                ? (Time.unscaledTimeAsDouble - lastServerSnapshotReceivedLocalTime) * 1000.0d
+                : 0.0d;
+            return true;
         }
 
         public void ApplyDamage(BackendDamageStateMessage message)
@@ -1903,7 +3213,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     continue;
 
                 float t = (float)((renderTime - from.LocalTime) / Math.Max(0.0001d, to.LocalTime - from.LocalTime));
-                position = Vector3.LerpUnclamped(from.Position, to.Position, t);
+                position = InterpolateSnapshotPosition(
+                    from.Position,
+                    from.Velocity,
+                    from.LocalTime,
+                    to.Position,
+                    to.Velocity,
+                    to.LocalTime,
+                    t);
                 rotation = Quaternion.SlerpUnclamped(from.Rotation, to.Rotation, t);
                 InterpolateLocalWheelStates(from.WheelStates, to.WheelStates, t, wheelStateBuffer);
                 return;
@@ -1942,7 +3259,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 if (!visualReady)
                 {
                     visualReady = CreateResolvedVisual(
-                        root.transform,
+                        root,
+                        presentationRoot,
                         resolvedLoadout,
                         resolvedCarConfig,
                         resolvedPlayerId);
@@ -1952,7 +3270,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
             if (!visualReady)
             {
-                CreateFallbackVisual(root.transform, fallbackMaterial, fallbackColor);
+                CreateFallbackVisual(presentationRoot, fallbackMaterial, fallbackColor);
                 visualReady = true;
                 fallbackVisualActive = true;
             }
@@ -1998,8 +3316,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         private void RebuildFromFallbackVisual()
         {
             SetCollisionEnabled(false);
-            for (int i = root.transform.childCount - 1; i >= 0; i--)
-                UnityEngine.Object.Destroy(root.transform.GetChild(i).gameObject);
+            for (int i = presentationRoot.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(presentationRoot.GetChild(i).gameObject);
 
             visualReady = false;
             fallbackVisualActive = false;
@@ -2008,6 +3326,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             damageController = null;
             damageManager = null;
             wheelBindings.Clear();
+            presentationCorrectionPosition = Vector3.zero;
+            presentationCorrectionRotation = Quaternion.identity;
+            presentationRoot.localPosition = Vector3.zero;
+            presentationRoot.localRotation = Quaternion.identity;
         }
 
         private void RefreshVisualBindings()
@@ -2058,7 +3380,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             if (!TryResolveVisualLoadout(carConfig, out CarLoadoutConfig loadout))
                 return false;
 
-            return CreateResolvedVisual(parent, loadout, carConfig, playerId);
+            return CreateResolvedVisual(parent.gameObject, parent, loadout, carConfig, playerId);
         }
 
         private static bool TryResolveVisualLoadout(BackendCarConfigPayload carConfig, out CarLoadoutConfig loadout)
@@ -2077,22 +3399,22 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             return true;
         }
 
-        private static bool CreateResolvedVisual(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig, string playerId)
+        private static bool CreateResolvedVisual(GameObject rootObject, Transform visualParent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig, string playerId)
         {
             GameObject bodyPrefab = loadout.PlayerCarConfig.Visual.bodyPrefab;
-            GameObject bodyInstance = UnityEngine.Object.Instantiate(bodyPrefab, parent);
+            GameObject bodyInstance = UnityEngine.Object.Instantiate(bodyPrefab, visualParent);
             bodyInstance.name = "Body";
             bodyInstance.transform.localPosition = Vector3.zero;
             bodyInstance.transform.localRotation = Quaternion.identity;
             bodyInstance.transform.localScale = Vector3.one;
             ApplyRemoteBodySet(loadout, bodyInstance.transform, carConfig);
             ApplyRemoteCustomizations(bodyInstance.transform, carConfig);
-            EnsureRemotePhysics(parent.gameObject, bodyInstance, loadout.PlayerCarConfig);
-            EnsureRemoteDamage(parent.gameObject, bodyInstance, loadout.PlayerCarConfig, loadout.PlayerCarConfig.Visual != null ? loadout.PlayerCarConfig.Visual.bodyPrefab : null);
-            EnsureNetworkEntity(parent.gameObject, playerId);
-            StripGameplayComponents(bodyInstance, keepBodyColliders: true);
+            EnsureRemotePhysics(rootObject, bodyInstance, loadout.PlayerCarConfig);
+            EnsureRemoteDamage(rootObject, bodyInstance, loadout.PlayerCarConfig, loadout.PlayerCarConfig.Visual != null ? loadout.PlayerCarConfig.Visual.bodyPrefab : null);
+            EnsureNetworkEntity(rootObject, playerId);
+            StripGameplayComponents(bodyInstance, keepBodyColliders: false);
             ApplyRemotePaint(bodyInstance, carConfig);
-            AttachRemoteWheels(parent, loadout, carConfig, null);
+            AttachRemoteWheels(visualParent, loadout, carConfig, null);
             return true;
         }
 
@@ -2159,6 +3481,54 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 if (pose.HasRotation)
                     binding.VisualRoot.localRotation = pose.Rotation;
             }
+        }
+
+        private void AccumulatePresentationCorrection(
+            Vector3 previousPosition,
+            Quaternion previousRotation,
+            Vector3 currentPosition,
+            Quaternion currentRotation,
+            float snapDistance,
+            float snapRotation,
+            float maxOffset)
+        {
+            if (presentationRoot == null)
+                return;
+
+            float positionDelta = Vector3.Distance(previousPosition, currentPosition);
+            float rotationDelta = Quaternion.Angle(previousRotation, currentRotation);
+            if (positionDelta < snapDistance && rotationDelta < snapRotation)
+                return;
+
+            Quaternion correctionRotation = Quaternion.Inverse(currentRotation) * previousRotation;
+            Vector3 correctionPosition = Quaternion.Inverse(currentRotation) * (previousPosition - currentPosition);
+            presentationCorrectionPosition = correctionPosition + correctionRotation * presentationCorrectionPosition;
+            presentationCorrectionRotation = correctionRotation * presentationCorrectionRotation;
+
+            float clampedMaxOffset = Mathf.Max(0.0f, maxOffset);
+            if (clampedMaxOffset > 0.0f && presentationCorrectionPosition.magnitude > clampedMaxOffset)
+                presentationCorrectionPosition = presentationCorrectionPosition.normalized * clampedMaxOffset;
+        }
+
+        private void TickPresentationCorrection(float deltaTime, float correctionSmooth)
+        {
+            if (presentationRoot == null)
+                return;
+
+            float dt = Mathf.Max(0.0001f, deltaTime);
+            float t = correctionSmooth > 0.0f
+                ? 1.0f - Mathf.Exp(-correctionSmooth * dt)
+                : 1.0f;
+            presentationCorrectionPosition = Vector3.Lerp(presentationCorrectionPosition, Vector3.zero, t);
+            presentationCorrectionRotation = Quaternion.Slerp(presentationCorrectionRotation, Quaternion.identity, t);
+
+            if (presentationCorrectionPosition.sqrMagnitude <= 0.000001f)
+                presentationCorrectionPosition = Vector3.zero;
+            if (Quaternion.Angle(presentationCorrectionRotation, Quaternion.identity) <= 0.05f)
+                presentationCorrectionRotation = Quaternion.identity;
+
+            presentationRoot.localPosition = presentationCorrectionPosition;
+            presentationRoot.localRotation = presentationCorrectionRotation;
         }
 
         private static void AttachRemoteWheels(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig, List<RemoteWheelBinding> wheelBindings)
@@ -2277,7 +3647,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             string[] names = { "FrontLeft", "FrontRight", "RearLeft", "RearRight" };
             for (int i = 0; i < names.Length; i++)
             {
-                Transform wheelRoot = transform.Find(names[i]);
+                Transform wheelRoot = presentationRoot != null ? presentationRoot.Find(names[i]) : null;
                 if (wheelRoot == null)
                     continue;
 
@@ -2324,11 +3694,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             if (body == null)
                 body = rootObject.AddComponent<Rigidbody>();
             body.isKinematic = true;
-            body.interpolation = RigidbodyInterpolation.Interpolate;
+            body.interpolation = RigidbodyInterpolation.None;
             body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
             body.maxDepenetrationVelocity = 7.5f;
 
-            if (bodyInstance != null && bodyInstance.GetComponentsInChildren<Collider>(true).Length == 0)
+            if (bodyInstance != null)
             {
                 Renderer[] renderers = bodyInstance.GetComponentsInChildren<Renderer>(true);
                 if (renderers != null && renderers.Length > 0)
@@ -2337,9 +3707,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     for (int i = 1; i < renderers.Length; i++)
                         bounds.Encapsulate(renderers[i].bounds);
 
-                    BoxCollider collider = bodyInstance.AddComponent<BoxCollider>();
-                    collider.center = bodyInstance.transform.InverseTransformPoint(bounds.center);
-                    Vector3 scale = bodyInstance.transform.lossyScale;
+                    BoxCollider collider = rootObject.GetComponent<BoxCollider>();
+                    if (collider == null)
+                        collider = rootObject.AddComponent<BoxCollider>();
+                    collider.center = rootObject.transform.InverseTransformPoint(bounds.center);
+                    Vector3 scale = rootObject.transform.lossyScale;
                     collider.size = new Vector3(
                         bounds.size.x / Mathf.Max(0.0001f, scale.x),
                         bounds.size.y / Mathf.Max(0.0001f, scale.y),

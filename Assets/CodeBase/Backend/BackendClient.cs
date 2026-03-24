@@ -262,12 +262,17 @@ public sealed class BackendClient
                 break;
             case "match_created":
                 BackendMatchCreatedMessage created = JsonUtility.FromJson<BackendMatchCreatedMessage>(json);
+                int currentTickRate = CurrentMatchInfo != null &&
+                                      string.Equals(CurrentMatchInfo.match_id, created.match_id, StringComparison.OrdinalIgnoreCase)
+                    ? CurrentMatchInfo.tick_rate
+                    : 0;
                 CurrentMatchInfo = new BackendMatchInfo
                 {
                     match_id = created.match_id,
                     lobby_id = created.lobby_id,
                     status = "starting",
                     map_id = created.map_id,
+                    tick_rate = created.tick_rate > 0 ? created.tick_rate : currentTickRate,
                     room_id = created.room_id,
                     room_status = created.room_status,
                     room_http_url = created.room_http_url,

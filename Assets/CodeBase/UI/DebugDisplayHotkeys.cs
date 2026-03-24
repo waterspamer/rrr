@@ -38,7 +38,10 @@ public sealed class DebugDisplayHotkeys : MonoBehaviour
 #if ENABLE_INPUT_SYSTEM
         if (Keyboard.current != null && Keyboard.current.f1Key.wasPressedThisFrame)
             return true;
-#endif
+#else
         return Input.GetKeyDown(KeyCode.F1);
+#endif
+
+        return false;
     }
 }

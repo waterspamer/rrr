@@ -56,6 +56,8 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
     {
         if (!Application.isBatchMode)
             return;
+        if (PurrNetSessionRuntime.IsServerMode)
+            return;
 
         DedicatedServerControlRuntime existing = FindFirstObjectByType<DedicatedServerControlRuntime>();
         if (existing != null)

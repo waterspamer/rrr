@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class GameSceneBootstrap : MonoBehaviour
 {
+    private const string PurrNetBootstrapRootName = "PurrNetSceneBootstrap";
+
     [SerializeField] private PlayerCar playerCar;
     [SerializeField] private FollowCarCamera followCamera;
     [SerializeField] private MultiplayerMatchRuntime multiplayerMatchRuntime;
@@ -35,8 +37,15 @@ public class GameSceneBootstrap : MonoBehaviour
         if (playerCar == null)
             return;
 
+        if (ShouldUsePurrNetMigration())
+        {
+            EnsurePurrNetBootstrap();
+            return;
+        }
+
         ApplySelectedLoadout();
         StartCoroutine(ApplySelectedLoadoutDeferred());
+
         EnsureLocalNetworkVehicleEntity();
         NotifyBackendMatchLoaded();
         EnsureMultiplayerRuntime();
@@ -160,5 +169,23 @@ public class GameSceneBootstrap : MonoBehaviour
 
         string playerId = Backend.Client.Session != null ? Backend.Client.Session.player_id : "local_player";
         entity.Configure(playerId, true);
+    }
+
+    private static bool ShouldUsePurrNetMigration()
+    {
+        return PurrNetSessionRuntime.IsEnabled;
+    }
+
+    private void EnsurePurrNetBootstrap()
+    {
+        PurrNetGameBootstrap bootstrap = FindFirstObjectByType<PurrNetGameBootstrap>();
+        if (bootstrap == null)
+        {
+            GameObject bootstrapRoot = new GameObject(PurrNetBootstrapRootName);
+            DontDestroyOnLoad(bootstrapRoot);
+            bootstrap = bootstrapRoot.AddComponent<PurrNetGameBootstrap>();
+        }
+
+        bootstrap.Configure(playerCar, followCamera);
     }
 }

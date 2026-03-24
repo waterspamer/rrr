@@ -17,6 +17,10 @@ public static class DedicatedServerBuildPipeline
     private const string ReleasePublicUrlEnvVar = "RRR_RELEASE_PUBLIC_URL";
     private const string DedicatedScenesArg = "-rrrDedicatedScenes";
     private const string DedicatedTargetArg = "-rrrDedicatedTarget";
+    private const string DefaultPurrNetBindAddress = "0.0.0.0";
+    private const string DefaultPurrNetPort = "5000";
+    private const string DefaultPurrNetTickRate = "30";
+    private const string DefaultPurrNetSoloBots = "0";
     private static readonly string[] DefaultDedicatedScenes = { "Assets/Scenes/Game.unity" };
     private static readonly string[] RequiredTags = { "Obstacle", "Weapon" };
 
@@ -209,7 +213,11 @@ public static class DedicatedServerBuildPipeline
         string script = "#!/usr/bin/env sh\n" +
                         "set -eu\n" +
                         "SCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\n" +
-                        $"exec \"$SCRIPT_DIR/{executableName}\" -batchmode -nographics \"$@\"\n";
+                        $"RRR_PURRNET_ADDRESS=\"${{RRR_PURRNET_ADDRESS:-{DefaultPurrNetBindAddress}}}\"\n" +
+                        $"RRR_PURRNET_PORT=\"${{RRR_PURRNET_PORT:-{DefaultPurrNetPort}}}\"\n" +
+                        $"RRR_PURRNET_TICK_RATE=\"${{RRR_PURRNET_TICK_RATE:-{DefaultPurrNetTickRate}}}\"\n" +
+                        $"RRR_PURRNET_SOLO_BOTS=\"${{RRR_PURRNET_SOLO_BOTS:-{DefaultPurrNetSoloBots}}}\"\n" +
+                        $"exec \"$SCRIPT_DIR/{executableName}\" -batchmode -nographics -rrrNetMode server -rrrNetAddress \"$RRR_PURRNET_ADDRESS\" -rrrNetPort \"$RRR_PURRNET_PORT\" -rrrNetTickRate \"$RRR_PURRNET_TICK_RATE\" -rrrNetSoloBots \"$RRR_PURRNET_SOLO_BOTS\" \"$@\"\n";
         File.WriteAllText(scriptPath, script);
 
         if (buildTarget != BuildTarget.StandaloneWindows64)
@@ -226,7 +234,12 @@ public static class DedicatedServerBuildPipeline
     private static void WriteRuntimeConfigTemplate(string outputDirectory)
     {
         string templatePath = Path.Combine(outputDirectory, "server.env.example");
-        string template = "RRR_MATCH_BACKEND_URL=http://127.0.0.1:8083\n" +
+        string template = "RRR_PURRNET_ADDRESS=0.0.0.0\n" +
+                          "RRR_PURRNET_PORT=5000\n" +
+                          "RRR_PURRNET_TICK_RATE=30\n" +
+                          "RRR_PURRNET_SOLO_BOTS=0\n" +
+                          "\n" +
+                          "RRR_MATCH_BACKEND_URL=http://127.0.0.1:8083\n" +
                           "RRR_DEDICATED_BIND=127.0.0.1\n" +
                           "RRR_DEDICATED_PORT=7777\n" +
                           "RRR_DEDICATED_LOG_LEVEL=info\n" +

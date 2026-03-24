@@ -96,6 +96,7 @@ public partial class CarDamageController : MonoBehaviour
     private int velocitySampleFilled;
     private bool obstacleTagWarningShown;
     private bool obstacleTagIsValid = true;
+    private bool collisionDamageEnabled = true;
 
     private struct MeshDeformTarget
     {
@@ -216,8 +217,16 @@ public partial class CarDamageController : MonoBehaviour
         NotifyDamageMapChanged();
     }
 
+    public void SetCollisionDamageEnabled(bool enabled)
+    {
+        collisionDamageEnabled = enabled;
+    }
+
     private void OnCollisionEnter(Collision collision)
     {
+        if (!collisionDamageEnabled)
+            return;
+
         if (!isInitialized)
             return;
 
