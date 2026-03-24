@@ -732,6 +732,13 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public int wheel_count;
         public bool input_enabled;
         public bool sleeping;
+        public bool has_damage_controller;
+        public bool can_capture_damage_snapshot;
+        public int captured_damage_width;
+        public int captured_damage_height;
+        public int captured_damage_bytes;
+        public int pending_damage_revision;
+        public int last_published_damage_revision;
     }
 
     private sealed class DedicatedServerSettings
@@ -985,6 +992,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             for (int i = 0; i < orderedPlayers.Count; i++)
             {
                 DedicatedRoomPlayerRuntime player = orderedPlayers[i];
+                TryQueueInitialDamageSnapshot(player);
                 if (player == null || player.PendingDamageSnapshot == null)
                     continue;
                 if (player.PendingDamageSnapshot.revision <= player.LastPublishedDamageRevision)
@@ -1016,6 +1024,22 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             return response;
         }
 
+        private static void TryQueueInitialDamageSnapshot(DedicatedRoomPlayerRuntime player)
+        {
+            if (player == null || player.PendingDamageSnapshot != null || player.LastPublishedDamageRevision >= 0)
+                return;
+
+            CarDamageController damageController = player.DamageController;
+            if (damageController == null)
+                return;
+
+            damageController.EnsureNetworkTextureReady();
+            if (!damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot) || snapshot == null)
+                return;
+
+            player.PendingDamageSnapshot = CloneDamageSnapshot(snapshot);
+        }
+
         private static DedicatedVehicleDebugState BuildDebugState(DedicatedRoomPlayerRuntime player)
         {
             CarControllerBase controller = player != null ? player.Controller : null;
@@ -1023,6 +1047,22 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                 return null;
 
             CarControllerSimulationState simulationState = controller.CaptureSimulationState();
+            CarDamageController damageController = player.DamageController;
+            bool canCaptureDamageSnapshot = false;
+            int capturedDamageWidth = 0;
+            int capturedDamageHeight = 0;
+            int capturedDamageBytes = 0;
+            if (damageController != null)
+            {
+                damageController.EnsureNetworkTextureReady();
+                if (damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot) && snapshot != null)
+                {
+                    canCaptureDamageSnapshot = true;
+                    capturedDamageWidth = snapshot.width;
+                    capturedDamageHeight = snapshot.height;
+                    capturedDamageBytes = snapshot.rawBytes != null ? snapshot.rawBytes.Length : 0;
+                }
+            }
 
             return new DedicatedVehicleDebugState
             {
@@ -1044,7 +1084,14 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                 grounded_wheels = controller.GroundedWheelCount,
                 wheel_count = controller.WheelCount,
                 input_enabled = controller.InputEnabled,
-                sleeping = controller.IsRigidBodySleeping
+                sleeping = controller.IsRigidBodySleeping,
+                has_damage_controller = damageController != null,
+                can_capture_damage_snapshot = canCaptureDamageSnapshot,
+                captured_damage_width = capturedDamageWidth,
+                captured_damage_height = capturedDamageHeight,
+                captured_damage_bytes = capturedDamageBytes,
+                pending_damage_revision = player.PendingDamageSnapshot != null ? player.PendingDamageSnapshot.revision : -1,
+                last_published_damage_revision = player.LastPublishedDamageRevision
             };
         }
 
