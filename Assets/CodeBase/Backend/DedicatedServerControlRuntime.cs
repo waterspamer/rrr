@@ -1204,9 +1204,11 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             CarDamageController damageController = playerCar.DamageController != null
                 ? playerCar.DamageController
                 : instance.GetComponentInChildren<CarDamageController>(true);
+            CarDamageNetworkSnapshot initialDamageSnapshot = null;
             if (damageController != null)
             {
                 damageController.EnsureNetworkTextureReady();
+                damageController.TryCaptureDamageSnapshot(out initialDamageSnapshot);
                 damageController.DamageMapChanged += snapshot => HandlePlayerDamageState(request.player_id, snapshot);
                 damageController.NetworkVehicleCollisionDetected += report => HandleVehicleCollision(request.player_id, report);
             }
@@ -1227,7 +1229,9 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                 PendingLoadoutRefreshFrames = 2,
                 LastInput = BackendCarControlInputPayload.FromControlFrame(CarControlFrame.CreateBrakingFrame()),
                 WheelBindings = ResolveWheelBindings(playerCar),
-                DamageController = damageController
+                DamageController = damageController,
+                PendingDamageSnapshot = initialDamageSnapshot,
+                LastPublishedDamageRevision = -1
             };
         }
 
@@ -1386,7 +1390,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public long ServerReceivedTimeMs;
         public List<WheelVisualBinding> WheelBindings = new List<WheelVisualBinding>();
         public CarDamageNetworkSnapshot PendingDamageSnapshot;
-        public int LastPublishedDamageRevision;
+        public int LastPublishedDamageRevision = -1;
     }
 
     private sealed class WheelVisualBinding
