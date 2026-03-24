@@ -97,6 +97,7 @@ public partial class CarDamageController : MonoBehaviour
     private bool obstacleTagWarningShown;
     private bool obstacleTagIsValid = true;
     private bool collisionDamageEnabled = true;
+    private bool damageSnapshotCaptureWarningShown;
 
     private struct MeshDeformTarget
     {
@@ -265,7 +266,14 @@ public partial class CarDamageController : MonoBehaviour
 
     private void ApplyPlatformCompatibility()
     {
-        if (deformMeshWithCompute && (Application.platform == RuntimePlatform.WebGLPlayer || !SystemInfo.supportsComputeShaders))
+        bool shouldDisableCompute =
+            Application.platform == RuntimePlatform.WebGLPlayer ||
+            Application.isBatchMode ||
+            !SystemInfo.supportsComputeShaders ||
+            SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null ||
+            damageDeformCompute == null;
+
+        if (deformMeshWithCompute && shouldDisableCompute)
         {
             deformMeshWithCompute = false;
             damageDeformCompute = null;
@@ -273,7 +281,7 @@ public partial class CarDamageController : MonoBehaviour
             if (!webGlComputeWarningShown)
             {
                 Debug.LogWarning(
-                    "CarDamageController: compute mesh deformation is disabled on WebGL / unsupported GPU because it is not reliable in this runtime.",
+                    "CarDamageController: compute mesh deformation is disabled in this runtime because compute shaders are unavailable or graphics are running headless.",
                     this);
                 webGlComputeWarningShown = true;
             }

@@ -13,16 +13,23 @@ public struct PurrVehiclePredictedDamageState
 
     public static PurrVehiclePredictedDamageState Capture(CarDamageController damageController)
     {
-        if (damageController == null || !damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot) || snapshot == null)
-            return default;
-
-        return new PurrVehiclePredictedDamageState
+        try
         {
-            revision = snapshot.revision,
-            width = snapshot.width,
-            height = snapshot.height,
-            rawBytes = snapshot.rawBytes
-        };
+            if (damageController == null || !damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot) || snapshot == null)
+                return default;
+
+            return new PurrVehiclePredictedDamageState
+            {
+                revision = snapshot.revision,
+                width = snapshot.width,
+                height = snapshot.height,
+                rawBytes = snapshot.rawBytes
+            };
+        }
+        catch
+        {
+            return default;
+        }
     }
 
     public CarDamageNetworkSnapshot ToSnapshot()

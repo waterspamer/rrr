@@ -45,22 +45,49 @@ public partial class CarDamageController
 
     public bool TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot)
     {
-        EnsureNetworkTextureReady();
+        try
+        {
+            EnsureNetworkTextureReady();
+        }
+        catch (Exception ex)
+        {
+            snapshot = null;
+            if (!damageSnapshotCaptureWarningShown)
+            {
+                damageSnapshotCaptureWarningShown = true;
+                Debug.LogWarning($"CarDamageController: failed to capture damage snapshot. {ex.Message}", this);
+            }
+            return false;
+        }
+
         if (cpuTexture == null)
         {
             snapshot = null;
             return false;
         }
 
-        byte[] bytes = cpuTexture.GetRawTextureData();
-        snapshot = new CarDamageNetworkSnapshot
+        try
         {
-            revision = damageRevision,
-            width = textureWidth,
-            height = textureHeight,
-            rawBytes = bytes != null ? (byte[])bytes.Clone() : Array.Empty<byte>(),
-        };
-        return true;
+            byte[] bytes = cpuTexture.GetRawTextureData();
+            snapshot = new CarDamageNetworkSnapshot
+            {
+                revision = damageRevision,
+                width = textureWidth,
+                height = textureHeight,
+                rawBytes = bytes != null ? (byte[])bytes.Clone() : Array.Empty<byte>(),
+            };
+            return true;
+        }
+        catch (Exception ex)
+        {
+            snapshot = null;
+            if (!damageSnapshotCaptureWarningShown)
+            {
+                damageSnapshotCaptureWarningShown = true;
+                Debug.LogWarning($"CarDamageController: failed to read damage texture snapshot. {ex.Message}", this);
+            }
+            return false;
+        }
     }
 
     public void ApplyNetworkDamageSnapshot(CarDamageNetworkSnapshot snapshot, DamageManager managerOverride = null)

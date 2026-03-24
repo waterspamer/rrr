@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -8,7 +9,19 @@ public partial class CarDamageController
         if (!deformMeshWithCompute || damageDeformCompute == null || deformTargets == null || !hasBounds || runtimeTexture == null)
             return;
 
-        int kernel = damageDeformCompute.FindKernel("Deform");
+        int kernel;
+        try
+        {
+            kernel = damageDeformCompute.FindKernel("Deform");
+        }
+        catch (Exception ex)
+        {
+            deformMeshWithCompute = false;
+            damageDeformCompute = null;
+            Debug.LogWarning($"CarDamageController: compute deformation was disabled because the 'Deform' kernel is unavailable. {ex.Message}", this);
+            return;
+        }
+
         damageDeformCompute.SetTexture(kernel, "_DamageTex", runtimeTexture);
         damageDeformCompute.SetVector("_VehicleSize", computedVehicleSize);
         damageDeformCompute.SetVector("_TexResolution", new Vector4(textureWidth, textureHeight, 0.0f, 0.0f));
