@@ -91,9 +91,12 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
     private void FixedUpdate()
     {
         PumpMainThreadQueue();
-        activeRoom?.Tick();
+        if (activeRoom == null || !activeRoom.UseAutomaticTick)
+            return;
+
+        activeRoom.Tick();
 #if UNITY_SERVER
-        if (activeRoom != null && Physics.simulationMode == SimulationMode.Script)
+        if (Physics.simulationMode == SimulationMode.Script)
             Physics.Simulate(Time.fixedDeltaTime);
 #endif
     }
@@ -239,6 +242,15 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                     return;
                 }
 
+                if (segments.Length == 5 && string.Equals(segments[4], "step", StringComparison.OrdinalIgnoreCase) && method == "POST")
+                {
+                    string body = await ReadBodyAsync(context.Request);
+                    DedicatedStepRoomRequest request = JsonUtility.FromJson<DedicatedStepRoomRequest>(body);
+                    DedicatedStepRoomResponse payload = await RunOnMainThreadAsync(() => StepRoom(matchId, request));
+                    await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
+                    return;
+                }
+
                 if (segments.Length == 5 && string.Equals(segments[4], "snapshot", StringComparison.OrdinalIgnoreCase) && method == "GET")
                 {
                     DedicatedRoomSnapshotResponse payload = await RunOnMainThreadAsync(() => GetSnapshot(matchId));
@@ -354,6 +366,22 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
     {
         DedicatedSimulationRoom room = RequireRoom(matchId);
         return room.BuildSnapshot();
+    }
+
+    private DedicatedStepRoomResponse StepRoom(string matchId, DedicatedStepRoomRequest request)
+    {
+        DedicatedSimulationRoom room = RequireRoom(matchId);
+        int executedTicks = room.Step(request != null ? request.ticks : 1);
+        DedicatedRoomSnapshotResponse snapshot = room.BuildSnapshot();
+        return new DedicatedStepRoomResponse
+        {
+            match_id = matchId,
+            status = room.Status,
+            executed_ticks = executedTicks,
+            server_tick = room.ServerTick,
+            server_time = snapshot != null ? snapshot.server_time : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            snapshot = snapshot
+        };
     }
 
     private DedicatedSimulationRoom RequireRoom(string matchId)
@@ -554,6 +582,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public string created_at;
         public int tick_rate;
         public int server_tick;
+        public bool manual_tick;
     }
 
     [Serializable]
@@ -569,6 +598,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public string map_id;
         public int tick_rate;
         public int broadcast_rate;
+        public bool manual_tick;
         public List<DedicatedRoomPlayerRequest> players = new List<DedicatedRoomPlayerRequest>();
     }
 
@@ -606,6 +636,23 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public string status;
         public int accepted_players;
         public int server_tick;
+    }
+
+    [Serializable]
+    private sealed class DedicatedStepRoomRequest
+    {
+        public int ticks = 1;
+    }
+
+    [Serializable]
+    private sealed class DedicatedStepRoomResponse
+    {
+        public string match_id;
+        public string status;
+        public int executed_ticks;
+        public int server_tick;
+        public long server_time;
+        public DedicatedRoomSnapshotResponse snapshot;
     }
 
     [Serializable]
@@ -667,14 +714,20 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
     private sealed class DedicatedVehicleDebugState
     {
         public int current_gear;
+        public int requested_gear;
         public float current_rpm;
+        public float shift_timer;
+        public float shift_target_rpm;
+        public int shift_state;
         public float speed_kph;
         public float motor_torque;
         public float brake_torque;
         public float rear_brake_torque;
         public float steer_angle;
+        public float drift_kick_force;
         public float nitro_amount;
         public bool nitro_active;
+        public bool nitro_initialized;
         public int grounded_wheels;
         public int wheel_count;
         public bool input_enabled;
@@ -753,6 +806,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             MapId = string.IsNullOrWhiteSpace(request.map_id) ? "city_default" : request.map_id;
             TickRate = Mathf.Clamp(request.tick_rate <= 0 ? 30 : request.tick_rate, 10, 120);
             BroadcastRate = Mathf.Clamp(request.broadcast_rate <= 0 ? TickRate : request.broadcast_rate, 1, TickRate);
+            ManualTick = request.manual_tick;
             Status = "simulating";
             RoomToken = Guid.NewGuid().ToString("N");
             SceneName = SceneManager.GetActiveScene().name;
@@ -788,14 +842,51 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
         public string CreatedAtUtc { get; }
         public int TickRate { get; }
         public int BroadcastRate { get; }
+        public bool ManualTick { get; }
+        public bool UseAutomaticTick => !ManualTick;
         public int ServerTick { get; private set; }
         public int PlayerCount => orderedPlayers.Count;
 
         public void Tick()
         {
-            if (!string.Equals(Status, "simulating", StringComparison.OrdinalIgnoreCase))
+            if (!UseAutomaticTick || !string.Equals(Status, "simulating", StringComparison.OrdinalIgnoreCase))
                 return;
 
+            PrepareTick();
+            ServerTick += 1;
+        }
+
+        public int Step(int ticks)
+        {
+            if (!ManualTick)
+                throw new DedicatedControlException(409, "MANUAL_TICK_DISABLED", "Room does not support manual ticking");
+
+            int ticksToExecute = Mathf.Clamp(ticks <= 0 ? 1 : ticks, 1, 256);
+            int executedTicks = 0;
+            float deltaTime = 1.0f / Mathf.Max(1, TickRate);
+
+            for (int tickIndex = 0; tickIndex < ticksToExecute; tickIndex++)
+            {
+                if (!string.Equals(Status, "simulating", StringComparison.OrdinalIgnoreCase))
+                    break;
+
+                PrepareTick();
+                SimulateControllers(deltaTime);
+                ServerTick += 1;
+#if UNITY_SERVER
+                if (Physics.simulationMode == SimulationMode.Script)
+                    Physics.Simulate(deltaTime);
+#else
+                Physics.Simulate(deltaTime);
+#endif
+                executedTicks += 1;
+            }
+
+            return executedTicks;
+        }
+
+        private void PrepareTick()
+        {
             for (int i = 0; i < orderedPlayers.Count; i++)
             {
                 DedicatedRoomPlayerRuntime player = orderedPlayers[i];
@@ -809,8 +900,18 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                 PlayerCarLoadoutUtility.ApplySelectedLoadout(player.Car, player.LoadoutPayload);
                 RegroundPlayerAfterLoadoutRefresh(player);
             }
+        }
 
-            ServerTick += 1;
+        private void SimulateControllers(float deltaTime)
+        {
+            for (int i = 0; i < orderedPlayers.Count; i++)
+            {
+                DedicatedRoomPlayerRuntime player = orderedPlayers[i];
+                if (player == null || player.Controller == null)
+                    continue;
+
+                player.Controller.SimulateManualStep(ToControlFrame(player.LastInput), deltaTime);
+            }
         }
 
         public DedicatedRoomResponse ToRoomResponse(DedicatedServerSettings serverSettings)
@@ -828,7 +929,8 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
                 player_count = PlayerCount,
                 created_at = CreatedAtUtc,
                 tick_rate = TickRate,
-                server_tick = ServerTick
+                server_tick = ServerTick,
+                manual_tick = ManualTick
             };
         }
 
@@ -920,17 +1022,25 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             if (controller == null)
                 return null;
 
+            CarControllerSimulationState simulationState = controller.CaptureSimulationState();
+
             return new DedicatedVehicleDebugState
             {
-                current_gear = controller.CurrentGear,
-                current_rpm = controller.CurrentRpm,
+                current_gear = simulationState.currentGear,
+                requested_gear = simulationState.requestedGear,
+                current_rpm = simulationState.currentRpm,
+                shift_timer = simulationState.shiftTimer,
+                shift_target_rpm = simulationState.shiftTargetRpm,
+                shift_state = simulationState.shiftState,
                 speed_kph = controller.SpeedKph,
                 motor_torque = controller.LastMotorTorque,
                 brake_torque = controller.LastBrakeTorque,
                 rear_brake_torque = controller.LastRearBrakeTorque,
-                steer_angle = controller.LastSteerAngle,
-                nitro_amount = controller.NitroAmount,
-                nitro_active = controller.NitroActive,
+                steer_angle = simulationState.currentSteerAngle,
+                drift_kick_force = simulationState.currentDriftKickForce,
+                nitro_amount = simulationState.nitroAmount,
+                nitro_active = simulationState.nitroActive,
+                nitro_initialized = simulationState.nitroInitialized,
                 grounded_wheels = controller.GroundedWheelCount,
                 wheel_count = controller.WheelCount,
                 input_enabled = controller.InputEnabled,
@@ -1061,6 +1171,7 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
 
             controller.SetInputSource(inputSource);
             controller.SetInputEnabled(true);
+            controller.SetManualSimulationEnabled(ManualTick);
             inputSource.ResetInput();
 
             instance.SetActive(true);
@@ -1238,6 +1349,19 @@ public sealed class DedicatedServerControlRuntime : MonoBehaviour
             Vector3 rightLocal = right.transform.localPosition;
             int zCompare = rightLocal.z.CompareTo(leftLocal.z);
             return zCompare != 0 ? zCompare : leftLocal.x.CompareTo(rightLocal.x);
+        }
+
+        private static CarControlFrame ToControlFrame(BackendCarControlInputPayload payload)
+        {
+            BackendCarControlInputPayload resolvedPayload = payload ?? BackendCarControlInputPayload.FromControlFrame(CarControlFrame.CreateBrakingFrame());
+            return new CarControlFrame
+            {
+                Motor = resolvedPayload.throttle,
+                Steer = resolvedPayload.steer,
+                Brake = resolvedPayload.brake,
+                Handbrake = resolvedPayload.handbrake,
+                Nitro = resolvedPayload.nitro
+            };
         }
     }
 

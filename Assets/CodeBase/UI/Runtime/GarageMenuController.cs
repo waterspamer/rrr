@@ -1379,6 +1379,18 @@ public class GarageMenuController : MonoBehaviour
             false,
             RefreshCurrentLobby));
 
+        if (CanStartSoloLobby(lobby))
+        {
+            view.Add(CreateActionTile(
+                "Start Solo",
+                "start",
+                multiplayerBusy
+                    ? "Requesting an authoritative solo room..."
+                    : "Spawn an idle server-side car and start the match without a second client.",
+                false,
+                StartSoloLobby));
+        }
+
         if (lobby.players == null || lobby.players.Count == 0)
         {
             view.Add(CreatePlaceholder("Lobby has no registered players yet."));
@@ -1391,18 +1403,21 @@ public class GarageMenuController : MonoBehaviour
             bool isSelf = Backend.Client.Session != null &&
                           player != null &&
                           string.Equals(player.player_id, Backend.Client.Session.player_id, StringComparison.OrdinalIgnoreCase);
+            string connectionLabel = player != null && player.is_server_controlled
+                ? "server-controlled"
+                : (string.IsNullOrWhiteSpace(player != null ? player.connection_state : null) ? "unknown" : player.connection_state);
             string subtitle = player == null
                 ? "Missing player payload."
                 : string.Format(
                     "{0} | {1}",
-                    string.IsNullOrWhiteSpace(player.connection_state) ? "unknown" : player.connection_state,
+                    connectionLabel,
                     player.car_config != null
                         ? player.car_config.ResolveDisplayName()
                         : "car config pending");
 
             view.Add(CreateMenuCard(
                 player != null ? player.player_name : "Unknown player",
-                GetGeneratedIcon(isSelf ? "paint" : "default"),
+                GetGeneratedIcon(player != null && player.is_server_controlled ? "start" : (isSelf ? "paint" : "default")),
                 subtitle,
                 isSelf,
                 null));
@@ -2012,6 +2027,44 @@ public class GarageMenuController : MonoBehaviour
         }
     }
 
+    private void StartSoloLobby()
+    {
+        _ = StartSoloLobbyAsync();
+    }
+
+    private async Task StartSoloLobbyAsync()
+    {
+        BackendLobbyDetails lobby = Backend.Client.CurrentLobby;
+        if (lobby == null)
+        {
+            currentView = GarageView.MultiplayerBrowser;
+            RefreshVisibleView();
+            return;
+        }
+
+        multiplayerBusy = true;
+        multiplayerStatus = "Starting solo room...";
+        RefreshVisibleView();
+
+        try
+        {
+            await EnsureMultiplayerReadyAsync(false);
+            PlayerCarSelectionPayload payload = CommitCurrentSelection();
+            await Backend.Client.UpdateCarConfigAsync(lobby.lobby_id, payload);
+            await Backend.Client.StartSoloAsync(lobby.lobby_id);
+            multiplayerStatus = "Solo room requested. Launching match...";
+        }
+        catch (Exception ex)
+        {
+            multiplayerStatus = ex.Message;
+        }
+        finally
+        {
+            multiplayerBusy = false;
+            RefreshVisibleView();
+        }
+    }
+
     private void LeaveCurrentLobby()
     {
         _ = LeaveCurrentLobbyAsync();
@@ -2078,6 +2131,32 @@ public class GarageMenuController : MonoBehaviour
         multiplayerStatus = backendLobbies.Count > 0
             ? string.Format("Found {0} lobbies on the backend.", backendLobbies.Count)
             : "No public lobbies found.";
+    }
+
+    private bool CanStartSoloLobby(BackendLobbyDetails lobby)
+    {
+        if (lobby == null ||
+            multiplayerBusy ||
+            !string.Equals(lobby.status, "waiting", StringComparison.OrdinalIgnoreCase) ||
+            Backend.Client.Session == null ||
+            !string.Equals(lobby.owner_player_id, Backend.Client.Session.player_id, StringComparison.OrdinalIgnoreCase) ||
+            lobby.players == null)
+        {
+            return false;
+        }
+
+        int humanPlayerCount = 0;
+        for (int i = 0; i < lobby.players.Count; i++)
+        {
+            BackendLobbyPlayer player = lobby.players[i];
+            if (player == null)
+                continue;
+            if (player.is_server_controlled)
+                return false;
+            humanPlayerCount++;
+        }
+
+        return humanPlayerCount == 1;
     }
 
     private static int CompareLobbySummary(BackendLobbySummary left, BackendLobbySummary right)

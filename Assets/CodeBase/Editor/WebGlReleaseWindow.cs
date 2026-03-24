@@ -17,19 +17,23 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private const string ConfigFileName = "WebGlReleaseSettings.json";
     private const string DefaultWebGlOutputRoot = @"C:\Work\BuildAgents\RRR-WebGL\editor-releases";
     private const string DefaultDesktopOutputRoot = @"C:\Work\BuildAgents\RRR-Win64\editor-releases";
+    private const string DefaultDedicatedOutputRoot = @"C:\Work\BuildAgents\RRR-Dedicated\editor-releases";
     private const string DefaultDesktopMirrorProjectPath = @"C:\Work\BuildAgents\RRR-Win64\mirror-project";
     private const string DefaultHost = "93.183.80.30";
     private const string DefaultUsername = "root";
     private const string DefaultWebGlRemoteRoot = "/var/www/rrr-webgl";
     private const string DefaultDesktopRemoteRoot = "/var/www/rrr-downloads/windows";
+    private const string DefaultDedicatedRemoteRoot = "/opt/rrr-dedicated";
     private const string DefaultWebGlPublicUrl = "https://rrr-demo.tonforspeed.space/play/";
     private const string DefaultDesktopPublicUrl = "https://rrr-demo.tonforspeed.space/downloads/windows/latest.zip";
+    private const string DefaultDedicatedPublicUrl = "";
     private const int DefaultKeepServerReleases = 5;
 
     private enum ReleaseTarget
     {
         WebGL,
-        WindowsX64
+        WindowsX64,
+        LinuxDedicatedServer
     }
 
     private enum ExternalProcessMode
@@ -43,6 +47,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private ReleaseTarget releaseTarget;
     private string webGlOutputRoot;
     private string desktopOutputRoot;
+    private string dedicatedOutputRoot;
     private string desktopMirrorProjectPath;
     private WebGLCompressionFormat webGlCompressionFormat;
     private string serverHost;
@@ -50,12 +55,15 @@ public sealed class WebGlReleaseWindow : EditorWindow
     private string password;
     private string webGlRemoteRoot;
     private string desktopRemoteRoot;
+    private string dedicatedRemoteRoot;
     private bool useDesktopBuildMirror;
     private int keepServerReleases;
     private string lastWebGlReleasePath;
     private string lastWebGlReleaseId;
     private string lastDesktopReleasePath;
     private string lastDesktopReleaseId;
+    private string lastDedicatedReleasePath;
+    private string lastDedicatedReleaseId;
     private Vector2 scrollPosition;
     private Vector2 logScrollPosition;
     private WebGlReleaseConfig config;
@@ -94,54 +102,135 @@ public sealed class WebGlReleaseWindow : EditorWindow
 
     private string CurrentOutputRoot
     {
-        get => releaseTarget == ReleaseTarget.WebGL ? webGlOutputRoot : desktopOutputRoot;
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return webGlOutputRoot;
+                case ReleaseTarget.WindowsX64:
+                    return desktopOutputRoot;
+                default:
+                    return dedicatedOutputRoot;
+            }
+        }
         set
         {
             if (releaseTarget == ReleaseTarget.WebGL)
                 webGlOutputRoot = value;
-            else
+            else if (releaseTarget == ReleaseTarget.WindowsX64)
                 desktopOutputRoot = value;
+            else
+                dedicatedOutputRoot = value;
         }
     }
 
     private string CurrentRemoteRoot
     {
-        get => releaseTarget == ReleaseTarget.WebGL ? webGlRemoteRoot : desktopRemoteRoot;
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return webGlRemoteRoot;
+                case ReleaseTarget.WindowsX64:
+                    return desktopRemoteRoot;
+                default:
+                    return dedicatedRemoteRoot;
+            }
+        }
         set
         {
             if (releaseTarget == ReleaseTarget.WebGL)
                 webGlRemoteRoot = value;
-            else
+            else if (releaseTarget == ReleaseTarget.WindowsX64)
                 desktopRemoteRoot = value;
+            else
+                dedicatedRemoteRoot = value;
         }
     }
 
     private string CurrentLastReleasePath
     {
-        get => releaseTarget == ReleaseTarget.WebGL ? lastWebGlReleasePath : lastDesktopReleasePath;
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return lastWebGlReleasePath;
+                case ReleaseTarget.WindowsX64:
+                    return lastDesktopReleasePath;
+                default:
+                    return lastDedicatedReleasePath;
+            }
+        }
         set
         {
             if (releaseTarget == ReleaseTarget.WebGL)
                 lastWebGlReleasePath = value;
-            else
+            else if (releaseTarget == ReleaseTarget.WindowsX64)
                 lastDesktopReleasePath = value;
+            else
+                lastDedicatedReleasePath = value;
         }
     }
 
     private string CurrentLastReleaseId
     {
-        get => releaseTarget == ReleaseTarget.WebGL ? lastWebGlReleaseId : lastDesktopReleaseId;
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return lastWebGlReleaseId;
+                case ReleaseTarget.WindowsX64:
+                    return lastDesktopReleaseId;
+                default:
+                    return lastDedicatedReleaseId;
+            }
+        }
         set
         {
             if (releaseTarget == ReleaseTarget.WebGL)
                 lastWebGlReleaseId = value;
-            else
+            else if (releaseTarget == ReleaseTarget.WindowsX64)
                 lastDesktopReleaseId = value;
+            else
+                lastDedicatedReleaseId = value;
         }
     }
 
-    private string CurrentPublicUrl => releaseTarget == ReleaseTarget.WebGL ? DefaultWebGlPublicUrl : DefaultDesktopPublicUrl;
-    private string CurrentTargetDisplayName => releaseTarget == ReleaseTarget.WebGL ? "WebGL" : "Windows x64";
+    private string CurrentPublicUrl
+    {
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return DefaultWebGlPublicUrl;
+                case ReleaseTarget.WindowsX64:
+                    return DefaultDesktopPublicUrl;
+                default:
+                    return DefaultDedicatedPublicUrl;
+            }
+        }
+    }
+
+    private string CurrentTargetDisplayName
+    {
+        get
+        {
+            switch (releaseTarget)
+            {
+                case ReleaseTarget.WebGL:
+                    return "WebGL";
+                case ReleaseTarget.WindowsX64:
+                    return "Windows x64";
+                default:
+                    return "Linux Dedicated Server";
+            }
+        }
+    }
 
     private void OnEnable()
     {
@@ -170,7 +259,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
         {
             webGlCompressionFormat = (WebGLCompressionFormat)EditorGUILayout.EnumPopup("Compression", webGlCompressionFormat);
         }
-        else
+        else if (releaseTarget == ReleaseTarget.WindowsX64)
         {
             useDesktopBuildMirror = EditorGUILayout.ToggleLeft("Build Windows x64 from mirror project", useDesktopBuildMirror);
             using (new EditorGUI.DisabledScope(!useDesktopBuildMirror))
@@ -222,17 +311,22 @@ public sealed class WebGlReleaseWindow : EditorWindow
                     EditorUtility.RevealInFinder(CurrentLastReleasePath);
             }
 
-            if (GUILayout.Button(releaseTarget == ReleaseTarget.WebGL ? "Open Site" : "Open Download URL"))
-                Application.OpenURL(CurrentPublicUrl);
+            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(CurrentPublicUrl)))
+            {
+                if (GUILayout.Button(GetOpenButtonLabel()))
+                    Application.OpenURL(CurrentPublicUrl);
+            }
         }
 
         EditorGUILayout.Space(12f);
         EditorGUILayout.HelpBox(
             releaseTarget == ReleaseTarget.WebGL
                 ? "WebGL builds stay editable in the opened Unity Editor and deploy to /play/ on the site."
-                : useDesktopBuildMirror
+                : releaseTarget == ReleaseTarget.WindowsX64 && useDesktopBuildMirror
                     ? "Windows x64 builds sync the working tree into a separate mirror project, then build there in batchmode so your main Unity Editor can stay open."
-                    : "Windows x64 builds run in the opened editor and are published as downloadable .zip artifacts for the future launcher.",
+                    : releaseTarget == ReleaseTarget.WindowsX64
+                        ? "Windows x64 builds run in the opened editor and are published as downloadable .zip artifacts for the future launcher."
+                        : "Linux Dedicated Server builds produce a versioned headless artifact with run.sh and deploy it as a systemd-backed service release.",
             MessageType.Info);
 
         EditorGUILayout.EndScrollView();
@@ -249,7 +343,10 @@ public sealed class WebGlReleaseWindow : EditorWindow
             string.IsNullOrWhiteSpace(CurrentLastReleasePath) ? "No local path recorded" : CurrentLastReleasePath,
             EditorStyles.textField,
             GUILayout.Height(EditorGUIUtility.singleLineHeight * 2f));
-        EditorGUILayout.SelectableLabel(CurrentPublicUrl, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
+        EditorGUILayout.SelectableLabel(
+            string.IsNullOrWhiteSpace(CurrentPublicUrl) ? "No public URL" : CurrentPublicUrl,
+            EditorStyles.textField,
+            GUILayout.Height(EditorGUIUtility.singleLineHeight));
     }
 
     private void DrawOperationStatus()
@@ -275,7 +372,9 @@ public sealed class WebGlReleaseWindow : EditorWindow
         EditorGUILayout.HelpBox(
             releaseTarget == ReleaseTarget.WebGL
                 ? "Pipeline: build player -> write release.json -> package -> upload -> extract -> activate /play/"
-                : "Pipeline: build player -> write release.json -> package -> upload zip -> update latest download links",
+                : releaseTarget == ReleaseTarget.WindowsX64
+                    ? "Pipeline: build player -> write release.json -> package -> upload zip -> update latest download links"
+                    : "Pipeline: build player -> write run.sh + release.json -> package -> upload zip -> switch current -> restart systemd service",
             MessageType.None);
 
         if (deployLogLines.Count > 0)
@@ -303,7 +402,9 @@ public sealed class WebGlReleaseWindow : EditorWindow
 
         return releaseTarget == ReleaseTarget.WebGL
             ? File.Exists(Path.Combine(releasePath, "index.html"))
-            : File.Exists(Path.Combine(releasePath, "release.json")) && Directory.GetFiles(releasePath, "*.exe", SearchOption.TopDirectoryOnly).Length > 0;
+            : releaseTarget == ReleaseTarget.WindowsX64
+                ? File.Exists(Path.Combine(releasePath, "release.json")) && Directory.GetFiles(releasePath, "*.exe", SearchOption.TopDirectoryOnly).Length > 0
+                : File.Exists(Path.Combine(releasePath, "release.json")) && File.Exists(Path.Combine(releasePath, "run.sh"));
     }
 
     private void BuildOnly()
@@ -361,11 +462,17 @@ public sealed class WebGlReleaseWindow : EditorWindow
                 SetStage("Building WebGL player", 0.35f);
                 report = WebGlBuildPipeline.Build(releasePath, webGlCompressionFormat);
             }
-            else
+            else if (releaseTarget == ReleaseTarget.WindowsX64)
             {
                 EditorUtility.DisplayProgressBar(Title, "Building Windows x64 player...", 0.35f);
                 SetStage("Building Windows x64 player", 0.35f);
                 report = DesktopBuildPipeline.Build(releasePath);
+            }
+            else
+            {
+                EditorUtility.DisplayProgressBar(Title, "Building Linux Dedicated Server...", 0.35f);
+                SetStage("Building Linux Dedicated Server", 0.35f);
+                report = DedicatedServerBuildPipeline.Build(releasePath);
             }
 
             EditorUtility.DisplayProgressBar(Title, "Writing release metadata...", 0.55f);
@@ -540,7 +647,18 @@ public sealed class WebGlReleaseWindow : EditorWindow
     {
         return releaseTarget == ReleaseTarget.WebGL
             ? "Publish-WebGLRelease.ps1"
-            : "Publish-DesktopRelease.ps1";
+            : releaseTarget == ReleaseTarget.WindowsX64
+                ? "Publish-DesktopRelease.ps1"
+                : "Publish-DedicatedServerRelease.ps1";
+    }
+
+    private string GetOpenButtonLabel()
+    {
+        if (releaseTarget == ReleaseTarget.WebGL)
+            return "Open Site";
+        if (releaseTarget == ReleaseTarget.WindowsX64)
+            return "Open Download URL";
+        return "Open Endpoint";
     }
 
     private void WriteReleaseMetadata(string releasePath, string releaseId, BuildReport report)
@@ -567,6 +685,9 @@ public sealed class WebGlReleaseWindow : EditorWindow
     {
         if (releaseTarget == ReleaseTarget.WebGL)
             return "index.html";
+
+        if (releaseTarget == ReleaseTarget.LinuxDedicatedServer)
+            return DedicatedServerBuildPipeline.GetExecutableFileName();
 
         string[] executables = Directory.GetFiles(releasePath, "*.exe", SearchOption.TopDirectoryOnly);
         return executables.Length > 0 ? Path.GetFileName(executables[0]) : string.Empty;
@@ -619,6 +740,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
         config.releaseTarget = (int)releaseTarget;
         config.webGlOutputRoot = webGlOutputRoot;
         config.desktopOutputRoot = desktopOutputRoot;
+        config.dedicatedOutputRoot = dedicatedOutputRoot;
         config.desktopMirrorProjectPath = desktopMirrorProjectPath;
         config.webGlCompressionFormat = (int)webGlCompressionFormat;
         config.serverHost = serverHost;
@@ -626,12 +748,15 @@ public sealed class WebGlReleaseWindow : EditorWindow
         config.password = password;
         config.webGlRemoteRoot = webGlRemoteRoot;
         config.desktopRemoteRoot = desktopRemoteRoot;
+        config.dedicatedRemoteRoot = dedicatedRemoteRoot;
         config.useDesktopBuildMirror = useDesktopBuildMirror;
         config.keepServerReleases = Mathf.Max(1, keepServerReleases);
         config.lastWebGlReleasePath = lastWebGlReleasePath;
         config.lastWebGlReleaseId = lastWebGlReleaseId;
         config.lastDesktopReleasePath = lastDesktopReleasePath;
         config.lastDesktopReleaseId = lastDesktopReleaseId;
+        config.lastDedicatedReleasePath = lastDedicatedReleasePath;
+        config.lastDedicatedReleaseId = lastDedicatedReleaseId;
 
         string configPath = GetConfigPath();
         string configDirectory = Path.GetDirectoryName(configPath);
@@ -665,6 +790,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
             : ReleaseTarget.WebGL;
         webGlOutputRoot = string.IsNullOrWhiteSpace(loadedConfig.webGlOutputRoot) ? DefaultWebGlOutputRoot : loadedConfig.webGlOutputRoot;
         desktopOutputRoot = string.IsNullOrWhiteSpace(loadedConfig.desktopOutputRoot) ? DefaultDesktopOutputRoot : loadedConfig.desktopOutputRoot;
+        dedicatedOutputRoot = string.IsNullOrWhiteSpace(loadedConfig.dedicatedOutputRoot) ? DefaultDedicatedOutputRoot : loadedConfig.dedicatedOutputRoot;
         desktopMirrorProjectPath = string.IsNullOrWhiteSpace(loadedConfig.desktopMirrorProjectPath) ? DefaultDesktopMirrorProjectPath : loadedConfig.desktopMirrorProjectPath;
         webGlCompressionFormat = Enum.IsDefined(typeof(WebGLCompressionFormat), loadedConfig.webGlCompressionFormat)
             ? (WebGLCompressionFormat)loadedConfig.webGlCompressionFormat
@@ -674,12 +800,15 @@ public sealed class WebGlReleaseWindow : EditorWindow
         password = loadedConfig.password ?? string.Empty;
         webGlRemoteRoot = string.IsNullOrWhiteSpace(loadedConfig.webGlRemoteRoot) ? DefaultWebGlRemoteRoot : loadedConfig.webGlRemoteRoot;
         desktopRemoteRoot = string.IsNullOrWhiteSpace(loadedConfig.desktopRemoteRoot) ? DefaultDesktopRemoteRoot : loadedConfig.desktopRemoteRoot;
+        dedicatedRemoteRoot = string.IsNullOrWhiteSpace(loadedConfig.dedicatedRemoteRoot) ? DefaultDedicatedRemoteRoot : loadedConfig.dedicatedRemoteRoot;
         useDesktopBuildMirror = loadedConfig.useDesktopBuildMirror;
         keepServerReleases = Mathf.Max(1, loadedConfig.keepServerReleases <= 0 ? DefaultKeepServerReleases : loadedConfig.keepServerReleases);
         lastWebGlReleasePath = loadedConfig.lastWebGlReleasePath ?? string.Empty;
         lastWebGlReleaseId = loadedConfig.lastWebGlReleaseId ?? string.Empty;
         lastDesktopReleasePath = loadedConfig.lastDesktopReleasePath ?? string.Empty;
         lastDesktopReleaseId = loadedConfig.lastDesktopReleaseId ?? string.Empty;
+        lastDedicatedReleasePath = loadedConfig.lastDedicatedReleasePath ?? string.Empty;
+        lastDedicatedReleaseId = loadedConfig.lastDedicatedReleaseId ?? string.Empty;
     }
 
     private static WebGlReleaseConfig CreateDefaultConfig()
@@ -689,6 +818,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
             releaseTarget = (int)ReleaseTarget.WebGL,
             webGlOutputRoot = DefaultWebGlOutputRoot,
             desktopOutputRoot = DefaultDesktopOutputRoot,
+            dedicatedOutputRoot = DefaultDedicatedOutputRoot,
             desktopMirrorProjectPath = DefaultDesktopMirrorProjectPath,
             webGlCompressionFormat = (int)WebGLCompressionFormat.Disabled,
             serverHost = DefaultHost,
@@ -696,12 +826,15 @@ public sealed class WebGlReleaseWindow : EditorWindow
             password = string.Empty,
             webGlRemoteRoot = DefaultWebGlRemoteRoot,
             desktopRemoteRoot = DefaultDesktopRemoteRoot,
+            dedicatedRemoteRoot = DefaultDedicatedRemoteRoot,
             useDesktopBuildMirror = true,
             keepServerReleases = DefaultKeepServerReleases,
             lastWebGlReleasePath = string.Empty,
             lastWebGlReleaseId = string.Empty,
             lastDesktopReleasePath = string.Empty,
-            lastDesktopReleaseId = string.Empty
+            lastDesktopReleaseId = string.Empty,
+            lastDedicatedReleasePath = string.Empty,
+            lastDedicatedReleaseId = string.Empty
         };
     }
 
@@ -762,8 +895,12 @@ public sealed class WebGlReleaseWindow : EditorWindow
                 else
                 {
                     SetStage("Deploy complete", 1.0f);
-                    QueueDialog($"{CurrentTargetDisplayName} build deployed.\n\n{CurrentPublicUrl}", false);
-                    Application.OpenURL(CurrentPublicUrl);
+                    string deployedMessage = string.IsNullOrWhiteSpace(CurrentPublicUrl)
+                        ? $"{CurrentTargetDisplayName} build deployed.\n\nRelease: {activeReleaseId}\nPath: {activeReleasePath}"
+                        : $"{CurrentTargetDisplayName} build deployed.\n\n{CurrentPublicUrl}";
+                    QueueDialog(deployedMessage, false);
+                    if (!string.IsNullOrWhiteSpace(CurrentPublicUrl))
+                        Application.OpenURL(CurrentPublicUrl);
                 }
             }
             else
@@ -923,6 +1060,7 @@ public sealed class WebGlReleaseWindow : EditorWindow
         public int releaseTarget;
         public string webGlOutputRoot;
         public string desktopOutputRoot;
+        public string dedicatedOutputRoot;
         public string desktopMirrorProjectPath;
         public int webGlCompressionFormat;
         public string serverHost;
@@ -930,11 +1068,14 @@ public sealed class WebGlReleaseWindow : EditorWindow
         public string password;
         public string webGlRemoteRoot;
         public string desktopRemoteRoot;
+        public string dedicatedRemoteRoot;
         public bool useDesktopBuildMirror;
         public int keepServerReleases;
         public string lastWebGlReleasePath;
         public string lastWebGlReleaseId;
         public string lastDesktopReleasePath;
         public string lastDesktopReleaseId;
+        public string lastDedicatedReleasePath;
+        public string lastDedicatedReleaseId;
     }
 }

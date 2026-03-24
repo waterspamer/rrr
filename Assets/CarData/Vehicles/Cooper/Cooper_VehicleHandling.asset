@@ -133,7 +133,7 @@ MonoBehaviour:
   sidewaysExtremumValue: 1
   sidewaysAsymptoteSlip: 2
   sidewaysAsymptoteValue: 0.5
-  wheelRadius: 0.35
+  wheelRadius: 0.3
   wheelWidth: 0.2
   mass: 1200
   downforce: 0.2

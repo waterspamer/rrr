@@ -17,10 +17,10 @@ MonoBehaviour:
     wheelPrefab: {fileID: 2140069367055781737, guid: 9f5c32b9b2bb7564a863782487eb5d5f, type: 3}
     addBodyCollider: 0
     generateConvexBodyColliders: 1
-    wheelBase: 2.4
+    wheelBase: 2.67
     axleWidth: 1.5
     zOffset: 0
-    wheelHeight: 0.35
+    wheelHeight: 0.33
     bodyRootHeightFactor: 0.3
     liveWheelPositions: 1
     useDefaultPaint: 1

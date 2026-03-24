@@ -9,6 +9,9 @@ public sealed class DebugDisplayHotkeys : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Bootstrap()
     {
+        if (Application.isBatchMode)
+            return;
+
         if (FindFirstObjectByType<DebugDisplayHotkeys>() != null)
             return;
 
@@ -19,6 +22,9 @@ public sealed class DebugDisplayHotkeys : MonoBehaviour
 
     private void Update()
     {
+        if (Application.isBatchMode)
+            return;
+
         if (!WasTogglePressed())
             return;
 

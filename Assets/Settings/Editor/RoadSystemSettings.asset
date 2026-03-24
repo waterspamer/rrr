@@ -17,7 +17,7 @@ MonoBehaviour:
     showRoadDirectionButtons: 0
     useRayCast: 1
     copyHitNormal: 0
-    newRoadPrefab: {fileID: 4734346412309951486, guid: 6d6517e00db7a5b4a866f75cbd2613b0, type: 3}
+    newRoadPrefab: {fileID: 0}
   intersectionSettings:
     newIntersectionPrefab: {fileID: 5805199047419129676, guid: aa7aa4b128d6c1549ad3c49e6b8d9223, type: 3}
   drawNavigatorDebug: 0

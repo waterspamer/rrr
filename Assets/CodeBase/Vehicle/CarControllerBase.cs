@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using System;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
@@ -189,6 +190,7 @@ public abstract partial class CarControllerBase : MonoBehaviour
     public int WheelCount => wheels.Count;
     public bool IsRigidBodySleeping => rb != null && rb.IsSleeping();
     public int GroundedWheelCount => CountGroundedWheels();
+    public bool ManualSimulationEnabled { get; private set; }
 
     protected virtual void Awake()
     {
@@ -223,6 +225,68 @@ public abstract partial class CarControllerBase : MonoBehaviour
 
     protected virtual void FixedUpdate()
     {
+        if (ManualSimulationEnabled)
+            return;
+
+        SimulateStep(CaptureControlFrame(), Time.fixedDeltaTime);
+    }
+
+    public CarControlFrame CaptureControlFrame()
+    {
+        CarControlFrame frame = ResolveControlFrame();
+        frame.Clamp();
+        return frame;
+    }
+
+    public void SimulateManualStep(CarControlFrame controlFrame, float deltaTime)
+    {
+        SimulateStep(controlFrame, deltaTime);
+    }
+
+    public void SetManualSimulationEnabled(bool enabled)
+    {
+        ManualSimulationEnabled = enabled;
+    }
+
+    public CarControllerSimulationState CaptureSimulationState()
+    {
+        return new CarControllerSimulationState
+        {
+            currentGear = currentGear,
+            requestedGear = requestedGear,
+            currentRpm = currentRpm,
+            shiftTimer = shiftTimer,
+            shiftTargetRpm = shiftTargetRpm,
+            shiftState = (int)shiftState,
+            currentSteerAngle = currentSteerAngle,
+            currentDriftKickForce = currentDriftKickForce,
+            currentSteeringWheelAngle = currentSteeringWheelAngle,
+            nitroAmount = nitroAmount,
+            nitroActive = nitroActive,
+            nitroInitialized = nitroInitialized
+        };
+    }
+
+    public void ApplySimulationState(CarControllerSimulationState state)
+    {
+        currentGear = state.currentGear;
+        requestedGear = state.requestedGear;
+        currentRpm = state.currentRpm;
+        shiftTimer = state.shiftTimer;
+        shiftTargetRpm = state.shiftTargetRpm;
+        shiftState = Enum.IsDefined(typeof(GearShiftState), state.shiftState)
+            ? (GearShiftState)state.shiftState
+            : GearShiftState.Ready;
+        currentSteerAngle = state.currentSteerAngle;
+        currentDriftKickForce = state.currentDriftKickForce;
+        currentSteeringWheelAngle = state.currentSteeringWheelAngle;
+        nitroAmount = state.nitroAmount;
+        nitroInitialized = state.nitroInitialized;
+        SetNitroActive(state.nitroActive);
+    }
+
+    private void SimulateStep(CarControlFrame controlFrame, float deltaTime)
+    {
         if (!PhysicsSimulationEnabled)
         {
             LastAppliedControlFrame = CarControlFrame.CreateBrakingFrame();
@@ -233,7 +297,10 @@ public abstract partial class CarControllerBase : MonoBehaviour
             return;
         }
 
-        CarControlFrame controlFrame = ResolveControlFrame();
+        if (deltaTime <= 0.0f)
+            deltaTime = Time.fixedDeltaTime;
+
+        controlFrame.Clamp();
         LastAppliedControlFrame = controlFrame;
 
         VehicleDynamics.Inputs inputs = new VehicleDynamics.Inputs
@@ -247,9 +314,9 @@ public abstract partial class CarControllerBase : MonoBehaviour
         ApplyAutoBrakeFromOppositeInput(ref inputs, rb);
         ApplyDriveType();
         UpdateNitro(controlFrame.Nitro, inputs.Motor);
-        UpdatePowertrain(inputs);
-        UpdateSteering(inputs, Time.fixedDeltaTime);
-        UpdateDriftKick(inputs, Time.fixedDeltaTime);
+        UpdatePowertrain(inputs, deltaTime);
+        UpdateSteering(inputs, deltaTime);
+        UpdateDriftKick(inputs, deltaTime);
         float motorTorque = ComputeMotorTorque(inputs.Motor);
 
         VehicleDynamics.Params parameters = new VehicleDynamics.Params

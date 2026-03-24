@@ -14,10 +14,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SuspensionConfig
   icon: {fileID: 0}
   applyVisualRideHeight: 1
-  visualWheelHeight: 0.35
-  suspensionDistance: 0.2
-  suspensionFrequency: 3.5
-  suspensionDamping: 0.8
+  visualWheelHeight: 0.31
+  suspensionDistance: 0.3604
+  suspensionFrequency: 3.01
+  suspensionDamping: 0.683
   suspensionTargetPosition: 0.5
   frontWeightBias: 0.55
   antiRollFront: 5000

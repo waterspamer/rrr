@@ -8,10 +8,9 @@ public abstract partial class CarControllerBase
         RequestShift(gear);
     }
 
-    private void UpdatePowertrain(VehicleDynamics.Inputs inputs)
+    private void UpdatePowertrain(VehicleDynamics.Inputs inputs, float deltaTime)
     {
         EnsureDefaultGears();
-        float deltaTime = Time.fixedDeltaTime;
         UpdateShiftState(deltaTime);
 
         if (gearbox.automatic)

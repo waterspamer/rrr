@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 #endif
 
+[DefaultExecutionOrder(250)]
 [DisallowMultipleComponent]
 public sealed class MultiplayerMatchRuntime : MonoBehaviour
 {
@@ -29,6 +30,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     [SerializeField, Min(0.0f)] private float maxDepenetrationVelocity = 7.5f;
     [SerializeField] private bool forceAuthoritativeLocalPlayer = true;
 
+    [Header("Local Prediction")]
+    [SerializeField] private bool enableLocalPrediction = true;
+    [SerializeField, Min(4)] private int localPredictionHistorySize = 128;
+    [SerializeField, Min(0.0f)] private float localPredictionPositionDeadzone = 0.6f;
+    [SerializeField, Min(0.0f)] private float localPredictionRotationDeadzone = 8.0f;
+    [SerializeField, Min(0)] private int localPredictionMaxReplaySteps = 32;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraSmoothTime = 0.05f;
+    [SerializeField, Min(0.0f)] private float localPredictionCameraRotationSmooth = 12.0f;
+
     private readonly Dictionary<string, RemotePlayerProxy> remotePlayers = new Dictionary<string, RemotePlayerProxy>(StringComparer.OrdinalIgnoreCase);
     private float nextInputSendTime;
     private float nextPingTime;
@@ -40,6 +50,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private readonly List<LocalWheelBinding> localWheelBindings = new List<LocalWheelBinding>(4);
     private readonly List<LocalAuthoritativeSnapshot> localAuthoritativeSnapshots = new List<LocalAuthoritativeSnapshot>(32);
     private readonly List<LocalWheelPoseState> localInterpolatedWheelStates = new List<LocalWheelPoseState>(4);
+    private readonly List<LocalPredictedInputSample> localPredictedInputs = new List<LocalPredictedInputSample>(128);
     private readonly Dictionary<string, float> recentLocalPairCollisions = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
     private const float RemoteCollisionDedupeWindow = 0.35f;
     private bool applicationHasFocus = true;
@@ -52,6 +63,20 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
     private bool localBodyModeOverridden;
     private bool localBodyKinematicBeforeOverride;
     private bool localBodyUseGravityBeforeOverride = true;
+    private RigidbodyInterpolation localBodyInterpolationBeforeOverride = RigidbodyInterpolation.None;
+    private VehicleServerSyncState localVehicleSyncState;
+    private FollowCarCamera followCarCamera;
+    private Transform localPredictionCameraTarget;
+    private Vector3 localPredictionCameraVelocity;
+    private Quaternion localPredictionCameraRotation = Quaternion.identity;
+    private bool localPredictionCameraInitialized;
+    private SimulationMode localPhysicsSimulationModeBeforeOverride = SimulationMode.FixedUpdate;
+    private bool localPhysicsSimulationModeOverridden;
+    private PendingLocalReconciliation pendingLocalReconciliation;
+    private float localFixedDeltaTimeBeforeOverride = 0.02f;
+    private bool localFixedDeltaTimeOverridden;
+    private bool localSnapshotTimelineInitialized;
+    private double localSnapshotServerToLocalOffset;
 
     private sealed class LocalWheelBinding
     {
@@ -75,6 +100,24 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         public Vector3 Velocity;
         public Vector3 AngularVelocity;
         public List<LocalWheelPoseState> WheelStates = new List<LocalWheelPoseState>(4);
+    }
+
+    private sealed class LocalPredictedInputSample
+    {
+        public int Sequence;
+        public CarControlFrame Input;
+        public ServerSyncedComponentState PredictedState;
+    }
+
+    private sealed class PendingLocalReconciliation
+    {
+        public int AcknowledgedSequence;
+        public ServerSyncedComponentState AuthoritativeState;
+    }
+
+    private bool IsUsingLocalPrediction()
+    {
+        return localAuthoritativeMode && enableLocalPrediction;
     }
 
     private void Awake()
@@ -125,9 +168,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         ApplyLocalSpawnIfReady();
 
         if (localAuthoritativeMode)
-            TickLocalAuthoritativeState(Time.unscaledTimeAsDouble);
+        {
+            if (IsUsingLocalPrediction())
+                TickLocalPredictionCameraTarget(Time.unscaledDeltaTime);
+            else
+                TickLocalAuthoritativeState(Time.unscaledTimeAsDouble);
+        }
 
-        if (Time.unscaledTime >= nextInputSendTime)
+        if (!IsUsingLocalPrediction() && Time.unscaledTime >= nextInputSendTime)
         {
             nextInputSendTime = Time.unscaledTime + (1.0f / Mathf.Max(1.0f, inputSendRate));
             _ = SendLocalInputAsync();
@@ -151,6 +199,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 remoteCollisionStaleTimeout,
                 remoteCollisionRecoveryDelay,
                 collisionsAllowed);
+    }
+
+    private void FixedUpdate()
+    {
+        if (!IsMultiplayerActive() || !IsUsingLocalPrediction())
+            return;
+
+        SendLocalPredictedInputTick();
     }
 
     private void OnApplicationFocus(bool hasFocus)
@@ -199,6 +255,15 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
     private async Task SendLocalInputAsync()
     {
+        int sequence = ++inputSequence;
+        await SendLocalInputAsync(
+            sequence,
+            CaptureLocalInput(),
+            localAuthoritativeMode ? null : CaptureLocalState());
+    }
+
+    private async Task SendLocalInputAsync(int sequence, BackendCarControlInputPayload input, BackendPlayerStateSnapshot state)
+    {
         if (!IsMultiplayerActive())
             return;
 
@@ -207,9 +272,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             await EnsureRealtimeReadyAsync();
             await Backend.Client.SendPlayerInputAsync(
                 activeMatchId,
-                ++inputSequence,
-                CaptureLocalInput(),
-                localAuthoritativeMode ? null : CaptureLocalState());
+                sequence,
+                input,
+                state);
         }
         catch (Exception ex)
         {
@@ -284,17 +349,154 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
     private BackendCarControlInputPayload CaptureLocalInput()
     {
-        CarControlFrame frame = localAuthoritativeMode
+        CarControlFrame frame = IsUsingLocalPrediction()
+            ? ReadControllerControlFrame()
+            : localAuthoritativeMode
             ? ReadAuthoritativeLocalControlFrame()
             : ReadControllerControlFrame();
         frame.Clamp();
         return BackendCarControlInputPayload.FromControlFrame(frame);
     }
 
+    private void SendLocalPredictedInputTick()
+    {
+        RefreshLocalBindings();
+        if (localPlayerCar == null || localVehicleSyncState == null)
+            return;
+
+        CarControllerBase controller = localPlayerCar.Controller;
+        if (controller == null)
+            return;
+
+        ApplyPendingLocalReconciliation();
+
+        int sequence = ++inputSequence;
+        CarControlFrame frame = controller.CaptureControlFrame();
+        controller.SimulateManualStep(frame, Time.fixedDeltaTime);
+        SimulatePhysicsStep(Time.fixedDeltaTime);
+
+        ServerSyncedComponentState predictedState = localVehicleSyncState.CaptureState();
+        if (predictedState != null)
+        {
+            localPredictedInputs.Add(new LocalPredictedInputSample
+            {
+                Sequence = sequence,
+                Input = frame,
+                PredictedState = predictedState.DeepClone()
+            });
+            TrimLocalPredictedInputs(int.MaxValue);
+        }
+
+        _ = SendLocalInputAsync(sequence, BackendCarControlInputPayload.FromControlFrame(frame), null);
+    }
+
+    private void TrimLocalPredictedInputs(int acknowledgedSequence)
+    {
+        if (acknowledgedSequence != int.MaxValue)
+            localPredictedInputs.RemoveAll(sample => sample != null && sample.Sequence <= acknowledgedSequence);
+
+        int maxSamples = Mathf.Max(8, localPredictionHistorySize);
+        if (localPredictedInputs.Count > maxSamples)
+            localPredictedInputs.RemoveRange(0, localPredictedInputs.Count - maxSamples);
+    }
+
+    private LocalPredictedInputSample FindPredictedInputSample(int acknowledgedSequence)
+    {
+        if (acknowledgedSequence <= 0 || localPredictedInputs.Count == 0)
+            return null;
+
+        LocalPredictedInputSample candidate = null;
+        for (int i = 0; i < localPredictedInputs.Count; i++)
+        {
+            LocalPredictedInputSample sample = localPredictedInputs[i];
+            if (sample == null || sample.Sequence > acknowledgedSequence)
+                break;
+            candidate = sample;
+        }
+
+        return candidate;
+    }
+
+    private void ApplyPendingLocalReconciliation()
+    {
+        if (pendingLocalReconciliation == null || localVehicleSyncState == null || localPlayerCar == null)
+            return;
+
+        CarControllerBase controller = localPlayerCar.Controller;
+        if (controller == null)
+        {
+            pendingLocalReconciliation = null;
+            return;
+        }
+
+        List<LocalPredictedInputSample> replaySamples = new List<LocalPredictedInputSample>();
+        for (int i = 0; i < localPredictedInputs.Count; i++)
+        {
+            LocalPredictedInputSample sample = localPredictedInputs[i];
+            if (sample == null || sample.Sequence <= pendingLocalReconciliation.AcknowledgedSequence)
+                continue;
+            replaySamples.Add(sample);
+        }
+
+        int maxReplaySteps = Mathf.Max(0, localPredictionMaxReplaySteps);
+        bool replayOverflow = maxReplaySteps > 0 && replaySamples.Count > maxReplaySteps;
+
+        localVehicleSyncState.ApplyState(pendingLocalReconciliation.AuthoritativeState);
+        Rigidbody body = localPlayerCar.GetComponent<Rigidbody>();
+        if (body != null)
+        {
+            body.maxDepenetrationVelocity = maxDepenetrationVelocity;
+            body.WakeUp();
+        }
+
+        Physics.SyncTransforms();
+
+        if (replayOverflow)
+        {
+            localPredictedInputs.Clear();
+            pendingLocalReconciliation = null;
+            return;
+        }
+
+        for (int i = 0; i < replaySamples.Count; i++)
+        {
+            LocalPredictedInputSample sample = replaySamples[i];
+            controller.SimulateManualStep(sample.Input, Time.fixedDeltaTime);
+            SimulatePhysicsStep(Time.fixedDeltaTime);
+            sample.PredictedState = localVehicleSyncState.CaptureState();
+        }
+
+        localPredictedInputs.Clear();
+        localPredictedInputs.AddRange(replaySamples);
+        pendingLocalReconciliation = null;
+    }
+
+    private void SimulatePhysicsStep(float deltaTime)
+    {
+        if (deltaTime <= 0.0f)
+            deltaTime = Time.fixedDeltaTime;
+
+        if (Physics.simulationMode == SimulationMode.Script)
+            Physics.Simulate(deltaTime);
+
+        Physics.SyncTransforms();
+    }
+
     private void RefreshLocalBindings()
     {
         if (localPlayerCar == null)
             localPlayerCar = FindFirstObjectByType<PlayerCar>();
+
+        if (localPlayerCar != null)
+        {
+            localVehicleSyncState = localPlayerCar.GetComponent<VehicleServerSyncState>();
+            if (localVehicleSyncState == null)
+                localVehicleSyncState = localPlayerCar.gameObject.AddComponent<VehicleServerSyncState>();
+        }
+        else
+        {
+            localVehicleSyncState = null;
+        }
 
         CarDamageController nextDamageController = localPlayerCar != null
             ? (localPlayerCar.DamageController != null ? localPlayerCar.DamageController : localPlayerCar.GetComponentInChildren<CarDamageController>(true))
@@ -400,15 +602,18 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 if (string.Equals(playerState.player_id, localPlayerId, StringComparison.OrdinalIgnoreCase))
                 {
                     if (localAuthoritativeMode)
-                        QueueLocalAuthoritativeState(state.server_time, playerState);
+                    {
+                        if (IsUsingLocalPrediction())
+                            ReconcileLocalPredictedState(playerState);
+                        else
+                            QueueLocalAuthoritativeState(state.server_time, playerState);
+                    }
                     continue;
                 }
 
                 RemotePlayerProxy proxy = GetOrCreateRemotePlayer(playerState);
                 proxy.SetTargetState(
                     state.server_time,
-                    playerState.client_time,
-                    playerState.server_received_time,
                     playerState.PositionVector,
                     Quaternion.Euler(playerState.RotationVector),
                     playerState.VelocityVector,
@@ -763,10 +968,12 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                                           matchInfo != null &&
                                           IsAuthoritativeRoom(matchInfo.room_status);
 
-        if (localAuthoritativeMode == shouldUseAuthoritativeMode)
+        bool modeChanged = localAuthoritativeMode != shouldUseAuthoritativeMode;
+        localAuthoritativeMode = shouldUseAuthoritativeMode;
+        UpdateLocalPredictionFixedDeltaTime(matchInfo);
+        if (!modeChanged)
             return;
 
-        localAuthoritativeMode = shouldUseAuthoritativeMode;
         RefreshLocalBindings();
 
         CarControllerBase controller = localPlayerCar != null ? localPlayerCar.Controller : null;
@@ -776,6 +983,9 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         {
             localAuthoritativeSnapshots.Clear();
             localInterpolatedWheelStates.Clear();
+            localPredictedInputs.Clear();
+            pendingLocalReconciliation = null;
+            ResetLocalSnapshotTimeline();
 
             if (controller != null && !localControllerModeOverridden)
             {
@@ -787,39 +997,83 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
             if (controller != null)
             {
-                // In server-authoritative mode the client becomes a visual puppet:
-                // local wheel colliders and chassis physics must stop fighting server snapshots.
-                controller.SetInputEnabled(false);
-                controller.SetPhysicsSimulationEnabled(false);
-                controller.enabled = false;
+                if (IsUsingLocalPrediction())
+                {
+                    controller.enabled = true;
+                    controller.SetInputEnabled(true);
+                    controller.SetPhysicsSimulationEnabled(true);
+                    controller.SetManualSimulationEnabled(true);
+                }
+                else
+                {
+                    // Fallback visual puppet path for rooms where local prediction is disabled.
+                    controller.SetManualSimulationEnabled(false);
+                    controller.SetInputEnabled(false);
+                    controller.SetPhysicsSimulationEnabled(false);
+                    controller.enabled = false;
+                }
             }
 
             if (body != null && !localBodyModeOverridden)
             {
                 localBodyKinematicBeforeOverride = body.isKinematic;
                 localBodyUseGravityBeforeOverride = body.useGravity;
+                localBodyInterpolationBeforeOverride = body.interpolation;
                 localBodyModeOverridden = true;
             }
 
             if (body != null)
             {
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
-                body.isKinematic = true;
-                body.useGravity = false;
+                if (IsUsingLocalPrediction())
+                {
+                    body.isKinematic = false;
+                    body.useGravity = true;
+                    body.interpolation = RigidbodyInterpolation.None;
+                    body.WakeUp();
+                }
+                else
+                {
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                    body.isKinematic = true;
+                    body.useGravity = false;
+                    body.interpolation = RigidbodyInterpolation.Interpolate;
+                }
+
                 body.maxDepenetrationVelocity = maxDepenetrationVelocity;
             }
+
+            if (IsUsingLocalPrediction() && !localPhysicsSimulationModeOverridden)
+            {
+                localPhysicsSimulationModeBeforeOverride = Physics.simulationMode;
+                localPhysicsSimulationModeOverridden = true;
+                Physics.simulationMode = SimulationMode.Script;
+            }
+            else if (!IsUsingLocalPrediction() && localPhysicsSimulationModeOverridden)
+            {
+                Physics.simulationMode = localPhysicsSimulationModeBeforeOverride;
+                localPhysicsSimulationModeOverridden = false;
+            }
+
+            if (IsUsingLocalPrediction())
+                EnsureLocalPredictionCameraTarget();
+            else
+                DestroyLocalPredictionCameraTarget();
         }
         else
         {
             localAuthoritativeSnapshots.Clear();
             localInterpolatedWheelStates.Clear();
+            localPredictedInputs.Clear();
+            pendingLocalReconciliation = null;
+            ResetLocalSnapshotTimeline();
 
             if (controller != null && localControllerModeOverridden)
             {
                 controller.enabled = localControllerEnabledBeforeOverride;
                 controller.SetInputEnabled(localControllerInputEnabledBeforeOverride);
                 controller.SetPhysicsSimulationEnabled(localControllerPhysicsEnabledBeforeOverride);
+                controller.SetManualSimulationEnabled(false);
                 localControllerModeOverridden = false;
             }
 
@@ -827,16 +1081,22 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 body.isKinematic = localBodyKinematicBeforeOverride;
                 body.useGravity = localBodyUseGravityBeforeOverride;
+                body.interpolation = localBodyInterpolationBeforeOverride;
                 localBodyModeOverridden = false;
             }
+
+            if (localPhysicsSimulationModeOverridden)
+            {
+                Physics.simulationMode = localPhysicsSimulationModeBeforeOverride;
+                localPhysicsSimulationModeOverridden = false;
+            }
+
+            DestroyLocalPredictionCameraTarget();
         }
     }
 
     private void RestoreLocalControllerMode()
     {
-        if (!localControllerModeOverridden && !localBodyModeOverridden)
-            return;
-
         if (localPlayerCar == null)
             localPlayerCar = FindFirstObjectByType<PlayerCar>();
 
@@ -847,19 +1107,199 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             controller.enabled = localControllerEnabledBeforeOverride;
             controller.SetInputEnabled(localControllerInputEnabledBeforeOverride);
             controller.SetPhysicsSimulationEnabled(localControllerPhysicsEnabledBeforeOverride);
+            controller.SetManualSimulationEnabled(false);
         }
 
         if (body != null && localBodyModeOverridden)
         {
             body.isKinematic = localBodyKinematicBeforeOverride;
             body.useGravity = localBodyUseGravityBeforeOverride;
+            body.interpolation = localBodyInterpolationBeforeOverride;
         }
 
         localControllerModeOverridden = false;
         localBodyModeOverridden = false;
         localAuthoritativeSnapshots.Clear();
         localInterpolatedWheelStates.Clear();
+        localPredictedInputs.Clear();
+        pendingLocalReconciliation = null;
+        ResetLocalSnapshotTimeline();
+        if (localPhysicsSimulationModeOverridden)
+        {
+            Physics.simulationMode = localPhysicsSimulationModeBeforeOverride;
+            localPhysicsSimulationModeOverridden = false;
+        }
+        if (localFixedDeltaTimeOverridden)
+        {
+            Time.fixedDeltaTime = localFixedDeltaTimeBeforeOverride;
+            localFixedDeltaTimeOverridden = false;
+        }
+        DestroyLocalPredictionCameraTarget();
         localAuthoritativeMode = false;
+    }
+
+    private void ResetLocalSnapshotTimeline()
+    {
+        localSnapshotTimelineInitialized = false;
+        localSnapshotServerToLocalOffset = 0.0d;
+    }
+
+    private void UpdateLocalPredictionFixedDeltaTime(BackendMatchInfo matchInfo)
+    {
+        bool shouldOverride = IsUsingLocalPrediction() && matchInfo != null && matchInfo.tick_rate > 0;
+        if (!shouldOverride)
+        {
+            if (localFixedDeltaTimeOverridden)
+            {
+                Time.fixedDeltaTime = localFixedDeltaTimeBeforeOverride;
+                localFixedDeltaTimeOverridden = false;
+            }
+
+            return;
+        }
+
+        float desiredFixedDeltaTime = 1.0f / Mathf.Clamp(matchInfo.tick_rate, 1, 240);
+        if (!localFixedDeltaTimeOverridden)
+        {
+            localFixedDeltaTimeBeforeOverride = Time.fixedDeltaTime;
+            localFixedDeltaTimeOverridden = true;
+        }
+
+        if (!Mathf.Approximately(Time.fixedDeltaTime, desiredFixedDeltaTime))
+            Time.fixedDeltaTime = desiredFixedDeltaTime;
+    }
+
+    private void ReconcileLocalPredictedState(BackendMatchPlayerState playerState)
+    {
+        if (playerState == null)
+            return;
+
+        RefreshLocalBindings();
+        if (localVehicleSyncState == null)
+            return;
+
+        LocalPredictedInputSample acknowledgedSample = FindPredictedInputSample(playerState.ack_input_seq);
+        if (acknowledgedSample == null || acknowledgedSample.PredictedState == null)
+        {
+            TrimLocalPredictedInputs(playerState.ack_input_seq);
+            return;
+        }
+
+        ServerSyncedComponentState authoritativeState = localVehicleSyncState.CreateState(playerState);
+        ServerSyncedComponentState predictedState = acknowledgedSample.PredictedState.DeepClone();
+        if (authoritativeState == null || predictedState == null)
+            return;
+
+        float positionError = VehicleServerSyncState.ComputePositionError(authoritativeState, predictedState);
+        float rotationError = VehicleServerSyncState.ComputeRotationErrorDegrees(authoritativeState, predictedState);
+
+        if (positionError <= localPredictionPositionDeadzone && rotationError <= localPredictionRotationDeadzone)
+        {
+            TrimLocalPredictedInputs(playerState.ack_input_seq);
+            return;
+        }
+
+        if (pendingLocalReconciliation != null &&
+            playerState.ack_input_seq <= pendingLocalReconciliation.AcknowledgedSequence)
+        {
+            return;
+        }
+
+        pendingLocalReconciliation = new PendingLocalReconciliation
+        {
+            AcknowledgedSequence = playerState.ack_input_seq,
+            AuthoritativeState = authoritativeState.DeepClone()
+        };
+    }
+
+    private void TickLocalPredictionCameraTarget(float deltaTime)
+    {
+        if (!EnsureLocalPredictionCameraTarget() || localPlayerCar == null)
+            return;
+
+        Transform localTransform = localPlayerCar.transform;
+        Vector3 desiredPosition = localTransform.position;
+        Quaternion desiredRotation = localTransform.rotation;
+
+        if (!localPredictionCameraInitialized)
+        {
+            localPredictionCameraTarget.position = desiredPosition;
+            localPredictionCameraTarget.rotation = desiredRotation;
+            localPredictionCameraRotation = desiredRotation;
+            localPredictionCameraVelocity = Vector3.zero;
+            localPredictionCameraInitialized = true;
+            return;
+        }
+
+        if (localPredictionCameraSmoothTime > 0.0f)
+        {
+            localPredictionCameraTarget.position = Vector3.SmoothDamp(
+                localPredictionCameraTarget.position,
+                desiredPosition,
+                ref localPredictionCameraVelocity,
+                localPredictionCameraSmoothTime,
+                Mathf.Infinity,
+                Mathf.Max(0.0001f, deltaTime));
+        }
+        else
+        {
+            localPredictionCameraTarget.position = desiredPosition;
+        }
+
+        if (localPredictionCameraRotationSmooth > 0.0f)
+        {
+            float t = 1.0f - Mathf.Exp(-localPredictionCameraRotationSmooth * Mathf.Max(0.0001f, deltaTime));
+            localPredictionCameraRotation = Quaternion.Slerp(localPredictionCameraRotation, desiredRotation, t);
+        }
+        else
+        {
+            localPredictionCameraRotation = desiredRotation;
+        }
+
+        localPredictionCameraTarget.rotation = localPredictionCameraRotation;
+    }
+
+    private bool EnsureLocalPredictionCameraTarget()
+    {
+        if (!IsUsingLocalPrediction())
+            return false;
+
+        if (localPlayerCar == null)
+            localPlayerCar = FindFirstObjectByType<PlayerCar>();
+        if (localPlayerCar == null)
+            return false;
+
+        if (followCarCamera == null)
+            followCarCamera = FindFirstObjectByType<FollowCarCamera>();
+
+        if (localPredictionCameraTarget == null)
+        {
+            GameObject targetRoot = new GameObject("LocalPredictionCameraTarget");
+            localPredictionCameraTarget = targetRoot.transform;
+            localPredictionCameraInitialized = false;
+        }
+
+        if (followCarCamera != null)
+            followCarCamera.SetTarget(localPredictionCameraTarget);
+
+        return true;
+    }
+
+    private void DestroyLocalPredictionCameraTarget()
+    {
+        if (followCarCamera == null)
+            followCarCamera = FindFirstObjectByType<FollowCarCamera>();
+
+        if (followCarCamera != null && localPlayerCar != null)
+            followCarCamera.SetTarget(localPlayerCar.transform);
+
+        if (localPredictionCameraTarget != null)
+            Destroy(localPredictionCameraTarget.gameObject);
+
+        localPredictionCameraTarget = null;
+        localPredictionCameraVelocity = Vector3.zero;
+        localPredictionCameraRotation = Quaternion.identity;
+        localPredictionCameraInitialized = false;
     }
 
     private void QueueLocalAuthoritativeState(long matchServerTimeMs, BackendMatchPlayerState playerState)
@@ -867,7 +1307,10 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         if (playerState == null)
             return;
 
-        double snapshotTime = ResolveSnapshotLocalTime(matchServerTimeMs, playerState.client_time, playerState.server_received_time);
+        double snapshotTime = ResolveSnapshotLocalTime(
+            matchServerTimeMs,
+            ref localSnapshotTimelineInitialized,
+            ref localSnapshotServerToLocalOffset);
         PushLocalAuthoritativeSnapshot(snapshotTime, playerState);
     }
 
@@ -1146,22 +1589,23 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         }
     }
 
-    private static double ResolveSnapshotLocalTime(long matchServerTimeMs, long clientTimeMs, long serverReceivedTimeMs)
+    private static double ResolveSnapshotLocalTime(
+        long matchServerTimeMs,
+        ref bool timelineInitialized,
+        ref double snapshotServerToLocalOffset)
     {
         double localNow = Time.unscaledTimeAsDouble;
         if (matchServerTimeMs <= 0)
             return localNow;
 
-        if (serverReceivedTimeMs > 0 && matchServerTimeMs >= serverReceivedTimeMs)
+        double serverTime = matchServerTimeMs / 1000.0d;
+        if (!timelineInitialized)
         {
-            double serverAgeSec = (matchServerTimeMs - serverReceivedTimeMs) / 1000.0d;
-            return localNow - Math.Max(0.0d, serverAgeSec);
+            snapshotServerToLocalOffset = localNow - serverTime;
+            timelineInitialized = true;
         }
 
-        if (clientTimeMs > 0)
-            return localNow;
-
-        return localNow;
+        return serverTime + snapshotServerToLocalOffset;
     }
 
     private static bool IsAuthoritativeRoom(string roomStatus)
@@ -1195,14 +1639,22 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             public readonly Quaternion Rotation;
             public readonly Vector3 Velocity;
             public readonly Vector3 AngularVelocity;
+            public readonly LocalWheelPoseState[] WheelStates;
 
-            public RemoteSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity, Vector3 angularVelocity)
+            public RemoteSnapshot(
+                double localTime,
+                Vector3 position,
+                Quaternion rotation,
+                Vector3 velocity,
+                Vector3 angularVelocity,
+                LocalWheelPoseState[] wheelStates)
             {
                 LocalTime = localTime;
                 Position = position;
                 Rotation = rotation;
                 Velocity = velocity;
                 AngularVelocity = angularVelocity;
+                WheelStates = wheelStates ?? Array.Empty<LocalWheelPoseState>();
             }
         }
 
@@ -1214,15 +1666,19 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
         private readonly int snapshotBufferSize;
         private readonly List<RemoteWheelBinding> wheelBindings = new List<RemoteWheelBinding>(4);
         private readonly List<RemoteSnapshot> snapshots = new List<RemoteSnapshot>(32);
+        private readonly List<LocalWheelPoseState> interpolatedWheelStates = new List<LocalWheelPoseState>(4);
         private Collider[] bodyColliders;
         private readonly string playerId;
         private bool visualReady;
+        private bool fallbackVisualActive;
         private CarDamageController damageController;
         private DamageManager damageManager;
         private int appliedDamageRevision;
         private double lastSnapshotLocalTime;
         private double collisionRecoveryUntil;
         private bool collisionEnabled;
+        private bool snapshotTimelineInitialized;
+        private double snapshotServerToLocalOffset;
 
         public RemotePlayerProxy(
             string playerId,
@@ -1247,7 +1703,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 transform.position = matchPlayer.SpawnPositionVector;
                 transform.rotation = Quaternion.Euler(matchPlayer.SpawnRotationVector);
-                snapshots.Add(new RemoteSnapshot(Time.unscaledTimeAsDouble, transform.position, transform.rotation, Vector3.zero, Vector3.zero));
+                snapshots.Add(new RemoteSnapshot(
+                    Time.unscaledTimeAsDouble,
+                    transform.position,
+                    transform.rotation,
+                    Vector3.zero,
+                    Vector3.zero,
+                    Array.Empty<LocalWheelPoseState>()));
             }
 
             EnsureVisual(matchPlayer, lobbyPlayer, fallbackCarConfig);
@@ -1255,16 +1717,11 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         public void EnsureVisual(BackendCarConfigPayload fallbackCarConfig)
         {
-            if (visualReady)
-                return;
-
             EnsureVisual(null, null, fallbackCarConfig);
         }
 
         public void SetTargetState(
             long matchServerTimeMs,
-            long clientTimeMs,
-            long serverReceivedTimeMs,
             Vector3 position,
             Quaternion rotation,
             Vector3 velocity,
@@ -1272,12 +1729,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             List<BackendWheelPose> wheelStates)
         {
             EnsureVisual(null);
-            double snapshotTime = ResolveSnapshotLocalTime(matchServerTimeMs, clientTimeMs, serverReceivedTimeMs);
+            double snapshotTime = ResolveSnapshotLocalTime(
+                matchServerTimeMs,
+                ref snapshotTimelineInitialized,
+                ref snapshotServerToLocalOffset);
             if (lastSnapshotLocalTime > 0.0d && snapshotTime - lastSnapshotLocalTime > 0.25d)
                 collisionRecoveryUntil = snapshotTime + 0.35d;
             lastSnapshotLocalTime = snapshotTime;
-            PushSnapshot(snapshotTime, position, rotation, velocity, angularVelocity);
-            ApplyWheelStates(wheelStates);
+            PushSnapshot(snapshotTime, position, rotation, velocity, angularVelocity, ConvertWheelStates(wheelStates));
         }
 
         public void Tick(
@@ -1304,7 +1763,12 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             double renderTime = localNow - Mathf.Max(0.01f, interpolationBackTime);
             Vector3 desiredPosition;
             Quaternion desiredRotation;
-            EvaluateSnapshot(renderTime, extrapolationLimit, out desiredPosition, out desiredRotation);
+            EvaluateSnapshot(
+                renderTime,
+                extrapolationLimit,
+                out desiredPosition,
+                out desiredRotation,
+                interpolatedWheelStates);
 
             if (Vector3.Distance(transform.position, desiredPosition) >= teleportDistance)
             {
@@ -1331,6 +1795,8 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 transform.SetPositionAndRotation(desiredPosition, desiredRotation);
             }
+
+            ApplyWheelStates(interpolatedWheelStates);
         }
 
         public void Dispose()
@@ -1378,7 +1844,13 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             appliedDamageRevision = message.revision;
         }
 
-        private void PushSnapshot(double localTime, Vector3 position, Quaternion rotation, Vector3 velocity, Vector3 angularVelocity)
+        private void PushSnapshot(
+            double localTime,
+            Vector3 position,
+            Quaternion rotation,
+            Vector3 velocity,
+            Vector3 angularVelocity,
+            LocalWheelPoseState[] wheelStates)
         {
             if (snapshots.Count > 0)
             {
@@ -1387,30 +1859,17 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     localTime = newest.LocalTime + 0.0001d;
             }
 
-            snapshots.Add(new RemoteSnapshot(localTime, position, rotation, velocity, angularVelocity));
+            snapshots.Add(new RemoteSnapshot(localTime, position, rotation, velocity, angularVelocity, wheelStates));
             if (snapshots.Count > snapshotBufferSize)
                 snapshots.RemoveRange(0, snapshots.Count - snapshotBufferSize);
         }
 
-        private static double ResolveSnapshotLocalTime(long matchServerTimeMs, long clientTimeMs, long serverReceivedTimeMs)
-        {
-            double localNow = Time.unscaledTimeAsDouble;
-            if (matchServerTimeMs <= 0)
-                return localNow;
-
-            if (serverReceivedTimeMs > 0 && matchServerTimeMs >= serverReceivedTimeMs)
-            {
-                double serverAgeSec = (matchServerTimeMs - serverReceivedTimeMs) / 1000.0d;
-                return localNow - Math.Max(0.0d, serverAgeSec);
-            }
-
-            if (clientTimeMs > 0)
-                return localNow;
-
-            return localNow;
-        }
-
-        private void EvaluateSnapshot(double renderTime, float extrapolationLimit, out Vector3 position, out Quaternion rotation)
+        private void EvaluateSnapshot(
+            double renderTime,
+            float extrapolationLimit,
+            out Vector3 position,
+            out Quaternion rotation,
+            List<LocalWheelPoseState> wheelStateBuffer)
         {
             if (snapshots.Count == 1)
             {
@@ -1420,6 +1879,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 rotation = only.AngularVelocity.sqrMagnitude > 0.0001f
                     ? only.Rotation * Quaternion.Euler(only.AngularVelocity * Mathf.Rad2Deg * (float)dt)
                     : only.Rotation;
+                CopyLocalWheelStates(only.WheelStates, wheelStateBuffer);
                 return;
             }
 
@@ -1431,6 +1891,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             {
                 position = oldest.Position;
                 rotation = oldest.Rotation;
+                CopyLocalWheelStates(oldest.WheelStates, wheelStateBuffer);
                 return;
             }
 
@@ -1444,6 +1905,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                 float t = (float)((renderTime - from.LocalTime) / Math.Max(0.0001d, to.LocalTime - from.LocalTime));
                 position = Vector3.LerpUnclamped(from.Position, to.Position, t);
                 rotation = Quaternion.SlerpUnclamped(from.Rotation, to.Rotation, t);
+                InterpolateLocalWheelStates(from.WheelStates, to.WheelStates, t, wheelStateBuffer);
                 return;
             }
 
@@ -1453,25 +1915,107 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             rotation = latest.AngularVelocity.sqrMagnitude > 0.0001f
                 ? latest.Rotation * Quaternion.Euler(latest.AngularVelocity * Mathf.Rad2Deg * (float)extrapolation)
                 : latest.Rotation;
+            CopyLocalWheelStates(latest.WheelStates, wheelStateBuffer);
+        }
+
+        private static LocalWheelPoseState[] ConvertWheelStates(List<BackendWheelPose> wheelStates)
+        {
+            return CloneLocalWheelStates(wheelStates).ToArray();
         }
 
         private void EnsureVisual(BackendMatchPlayerInfo matchPlayer, BackendLobbyPlayer lobbyPlayer, BackendCarConfigPayload fallbackCarConfig)
         {
-            if (visualReady)
+            if (visualReady && !fallbackVisualActive)
                 return;
 
-            visualReady =
-                TryCreateVisualFromMatchConfig(root.transform, matchPlayer) ||
-                TryCreateVisualFromLobbyConfig(root.transform, lobbyPlayer) ||
-                TryCreateVisual(root.transform, fallbackCarConfig, playerId);
+            if (TryResolveConfiguredVisualSource(
+                matchPlayer,
+                lobbyPlayer,
+                fallbackCarConfig,
+                out BackendCarConfigPayload resolvedCarConfig,
+                out string resolvedPlayerId,
+                out CarLoadoutConfig resolvedLoadout))
+            {
+                if (fallbackVisualActive)
+                    RebuildFromFallbackVisual();
+
+                if (!visualReady)
+                {
+                    visualReady = CreateResolvedVisual(
+                        root.transform,
+                        resolvedLoadout,
+                        resolvedCarConfig,
+                        resolvedPlayerId);
+                    fallbackVisualActive = !visualReady;
+                }
+            }
 
             if (!visualReady)
             {
                 CreateFallbackVisual(root.transform, fallbackMaterial, fallbackColor);
                 visualReady = true;
+                fallbackVisualActive = true;
             }
 
-            if (visualReady && damageController == null)
+            RefreshVisualBindings();
+        }
+
+        private bool TryResolveConfiguredVisualSource(
+            BackendMatchPlayerInfo matchPlayer,
+            BackendLobbyPlayer lobbyPlayer,
+            BackendCarConfigPayload fallbackCarConfig,
+            out BackendCarConfigPayload resolvedCarConfig,
+            out string resolvedPlayerId,
+            out CarLoadoutConfig resolvedLoadout)
+        {
+            if (matchPlayer != null && TryResolveVisualLoadout(matchPlayer.car_config, out resolvedLoadout))
+            {
+                resolvedCarConfig = matchPlayer.car_config;
+                resolvedPlayerId = matchPlayer.player_id;
+                return true;
+            }
+
+            if (lobbyPlayer != null && TryResolveVisualLoadout(lobbyPlayer.car_config, out resolvedLoadout))
+            {
+                resolvedCarConfig = lobbyPlayer.car_config;
+                resolvedPlayerId = lobbyPlayer.player_id;
+                return true;
+            }
+
+            if (TryResolveVisualLoadout(fallbackCarConfig, out resolvedLoadout))
+            {
+                resolvedCarConfig = fallbackCarConfig;
+                resolvedPlayerId = playerId;
+                return true;
+            }
+
+            resolvedCarConfig = null;
+            resolvedPlayerId = null;
+            resolvedLoadout = null;
+            return false;
+        }
+
+        private void RebuildFromFallbackVisual()
+        {
+            SetCollisionEnabled(false);
+            for (int i = root.transform.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(root.transform.GetChild(i).gameObject);
+
+            visualReady = false;
+            fallbackVisualActive = false;
+            physicsBody = null;
+            bodyColliders = null;
+            damageController = null;
+            damageManager = null;
+            wheelBindings.Clear();
+        }
+
+        private void RefreshVisualBindings()
+        {
+            if (!visualReady)
+                return;
+
+            if (damageController == null)
             {
                 damageController = root.GetComponentInChildren<CarDamageController>(true);
                 damageManager = root.GetComponentInChildren<DamageManager>(true);
@@ -1479,17 +2023,17 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
                     damageController.EnsureNetworkTextureReady();
             }
 
-            if (visualReady && physicsBody == null)
+            if (physicsBody == null)
             {
                 physicsBody = root.GetComponent<Rigidbody>();
                 if (physicsBody != null)
                     physicsBody.maxDepenetrationVelocity = 7.5f;
             }
 
-            if (visualReady && bodyColliders == null)
+            if (bodyColliders == null)
                 bodyColliders = root.GetComponentsInChildren<Collider>(true);
 
-            if (visualReady && wheelBindings.Count == 0)
+            if (wheelBindings.Count == 0)
                 ResolveWheelBindings();
         }
 
@@ -1511,17 +2055,31 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
 
         private static bool TryCreateVisual(Transform parent, BackendCarConfigPayload carConfig, string playerId)
         {
+            if (!TryResolveVisualLoadout(carConfig, out CarLoadoutConfig loadout))
+                return false;
+
+            return CreateResolvedVisual(parent, loadout, carConfig, playerId);
+        }
+
+        private static bool TryResolveVisualLoadout(BackendCarConfigPayload carConfig, out CarLoadoutConfig loadout)
+        {
+            loadout = null;
             if (carConfig == null || string.IsNullOrWhiteSpace(carConfig.loadout_name))
                 return false;
 
-            CarLoadoutConfig loadout = CarLoadoutResolver.Resolve(carConfig.ToPlayerSelectionPayload());
+            loadout = CarLoadoutResolver.Resolve(carConfig.ToPlayerSelectionPayload());
             if (loadout == null || loadout.PlayerCarConfig == null || loadout.PlayerCarConfig.Visual == null)
                 return false;
 
             GameObject bodyPrefab = loadout.PlayerCarConfig.Visual.bodyPrefab;
             if (bodyPrefab == null)
                 return false;
+            return true;
+        }
 
+        private static bool CreateResolvedVisual(Transform parent, CarLoadoutConfig loadout, BackendCarConfigPayload carConfig, string playerId)
+        {
+            GameObject bodyPrefab = loadout.PlayerCarConfig.Visual.bodyPrefab;
             GameObject bodyInstance = UnityEngine.Object.Instantiate(bodyPrefab, parent);
             bodyInstance.name = "Body";
             bodyInstance.transform.localPosition = Vector3.zero;
@@ -1583,7 +2141,7 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             CarCustomizationUtility.ApplySelections(bodyRoot, selections);
         }
 
-        private void ApplyWheelStates(List<BackendWheelPose> wheelStates)
+        private void ApplyWheelStates(IReadOnlyList<LocalWheelPoseState> wheelStates)
         {
             if (wheelStates == null || wheelStates.Count == 0 || wheelBindings.Count == 0)
                 return;
@@ -1592,12 +2150,14 @@ public sealed class MultiplayerMatchRuntime : MonoBehaviour
             for (int i = 0; i < count; i++)
             {
                 RemoteWheelBinding binding = wheelBindings[i];
-                BackendWheelPose pose = wheelStates[i];
-                if (binding == null || binding.VisualRoot == null || pose == null)
+                LocalWheelPoseState pose = wheelStates[i];
+                if (binding == null || binding.VisualRoot == null)
                     continue;
 
-                binding.VisualRoot.localPosition = pose.position != null ? pose.position.ToVector3() : binding.VisualRoot.localPosition;
-                binding.VisualRoot.localRotation = pose.rotation != null ? Quaternion.Euler(pose.rotation.ToVector3()) : binding.VisualRoot.localRotation;
+                if (pose.HasPosition)
+                    binding.VisualRoot.localPosition = pose.Position;
+                if (pose.HasRotation)
+                    binding.VisualRoot.localRotation = pose.Rotation;
             }
         }
 

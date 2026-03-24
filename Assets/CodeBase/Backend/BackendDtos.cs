@@ -409,11 +409,54 @@ public sealed class BackendMatchPlayerState
     public BackendVector3 velocity;
     public BackendVector3 angular_velocity;
     public List<BackendWheelPose> wheel_states = new List<BackendWheelPose>();
+    public BackendVehicleDebugState debug;
 
     public Vector3 PositionVector => position != null ? position.ToVector3() : Vector3.zero;
     public Vector3 RotationVector => rotation != null ? rotation.ToVector3() : Vector3.zero;
     public Vector3 VelocityVector => velocity != null ? velocity.ToVector3() : Vector3.zero;
     public Vector3 AngularVelocityVector => angular_velocity != null ? angular_velocity.ToVector3() : Vector3.zero;
+}
+
+[Serializable]
+public sealed class BackendVehicleDebugState
+{
+    public int current_gear;
+    public int requested_gear;
+    public float current_rpm;
+    public float shift_timer;
+    public float shift_target_rpm;
+    public int shift_state;
+    public float speed_kph;
+    public float motor_torque;
+    public float brake_torque;
+    public float rear_brake_torque;
+    public float steer_angle;
+    public float drift_kick_force;
+    public float nitro_amount;
+    public bool nitro_active;
+    public bool nitro_initialized;
+    public int grounded_wheels;
+    public int wheel_count;
+    public bool input_enabled;
+    public bool sleeping;
+
+    public CarControllerSimulationState ToSimulationState()
+    {
+        return new CarControllerSimulationState
+        {
+            currentGear = current_gear,
+            requestedGear = requested_gear,
+            currentRpm = current_rpm,
+            shiftTimer = shift_timer,
+            shiftTargetRpm = shift_target_rpm,
+            shiftState = shift_state,
+            currentSteerAngle = steer_angle,
+            currentDriftKickForce = drift_kick_force,
+            nitroAmount = nitro_amount,
+            nitroActive = nitro_active,
+            nitroInitialized = nitro_initialized
+        };
+    }
 }
 
 [Serializable]

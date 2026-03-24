@@ -4,6 +4,7 @@ param(
     [string]$ReleaseId = "",
     [string]$OutputRoot = "C:\Work\BuildAgents\RRR-Dedicated\releases",
     [string[]]$Scenes = @("Assets/Scenes/Game.unity"),
+    [ValidateSet("Linux", "Windows")] [string]$TargetPlatform = "Linux",
     [string]$LogPath = "",
     [int]$MaxAttempts = 3
 )
@@ -51,20 +52,38 @@ $env:RRR_RELEASE_BRANCH = "working-tree"
 $env:RRR_RELEASE_PUBLIC_URL = ""
 
 $sceneArg = ($Scenes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ";"
+$targetArg = $TargetPlatform.ToLowerInvariant()
 $metadataPath = Join-Path $releasePath "release.json"
 
+function Format-NativeArgument {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    return '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+}
+
 for ($attempt = 1; $attempt -le [Math]::Max(1, $MaxAttempts); $attempt++) {
+    $arguments = @(
+        "-batchmode",
+        "-quit",
+        "-standaloneBuildSubtarget", "Server",
+        "-projectPath", $ProjectPath,
+        "-executeMethod", "DedicatedServerBuildPipeline.BuildFromCommandLine",
+        "-rrrDedicatedScenes", $sceneArg,
+        "-rrrDedicatedTarget", $targetArg,
+        "-logFile", $LogPath
+    ) | ForEach-Object { Format-NativeArgument $_ }
+
     $process = Start-Process `
         -FilePath $UnityEditor `
-        -ArgumentList @(
-            "-batchmode",
-            "-quit",
-            "-standaloneBuildSubtarget", "Server",
-            "-projectPath", $ProjectPath,
-            "-executeMethod", "DedicatedServerBuildPipeline.BuildFromCommandLine",
-            "-rrrDedicatedScenes", $sceneArg,
-            "-logFile", $LogPath
-        ) `
+        -ArgumentList ($arguments -join ' ') `
         -Wait `
         -PassThru `
         -NoNewWindow

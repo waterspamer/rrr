@@ -17,6 +17,16 @@ public class PauseMenuController : MonoBehaviour
 
     private void Awake()
     {
+        if (Application.isBatchMode)
+        {
+            enabled = false;
+            if (uiDocument == null)
+                uiDocument = GetComponent<UIDocument>();
+            if (uiDocument != null)
+                uiDocument.enabled = false;
+            return;
+        }
+
         if (uiDocument == null)
             uiDocument = GetComponent<UIDocument>();
         root = uiDocument.rootVisualElement;
@@ -26,6 +36,9 @@ public class PauseMenuController : MonoBehaviour
 
     private void Update()
     {
+        if (Application.isBatchMode)
+            return;
+
         if (Input.GetKeyDown(KeyCode.Escape))
             Toggle();
     }

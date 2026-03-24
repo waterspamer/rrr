@@ -16,6 +16,7 @@ public static class DedicatedServerBuildPipeline
     private const string ReleaseBranchEnvVar = "RRR_RELEASE_BRANCH";
     private const string ReleasePublicUrlEnvVar = "RRR_RELEASE_PUBLIC_URL";
     private const string DedicatedScenesArg = "-rrrDedicatedScenes";
+    private const string DedicatedTargetArg = "-rrrDedicatedTarget";
     private static readonly string[] DefaultDedicatedScenes = { "Assets/Scenes/Game.unity" };
     private static readonly string[] RequiredTags = { "Obstacle", "Weapon" };
 
@@ -33,13 +34,14 @@ public static class DedicatedServerBuildPipeline
             throw new InvalidOperationException($"Missing environment variable: {OutputDirectoryEnvVar}");
 
         string[] scenes = GetCommandLineScenes();
-        BuildReport report = Build(outputDirectory, scenes);
-        WriteReleaseMetadata(outputDirectory, report, scenes);
-        WriteLaunchScript(outputDirectory);
+        BuildTarget buildTarget = GetCommandLineTarget();
+        BuildReport report = Build(outputDirectory, scenes, buildTarget);
+        WriteReleaseMetadata(outputDirectory, report, scenes, buildTarget);
+        WriteLaunchScripts(outputDirectory, buildTarget);
         WriteRuntimeConfigTemplate(outputDirectory);
     }
 
-    public static BuildReport Build(string outputDirectory, string[] scenes = null)
+    public static BuildReport Build(string outputDirectory, string[] scenes = null, BuildTarget buildTarget = BuildTarget.StandaloneLinux64)
     {
         string[] buildScenes = ResolveScenes(scenes);
         if (buildScenes.Length == 0)
@@ -47,34 +49,35 @@ public static class DedicatedServerBuildPipeline
         ValidateRequiredTags();
 
         Directory.CreateDirectory(outputDirectory);
-        string executablePath = Path.Combine(outputDirectory, GetExecutableFileName());
+        string executablePath = Path.Combine(outputDirectory, GetExecutableFileName(buildTarget));
 
         BuildPlayerOptions options = new BuildPlayerOptions
         {
             scenes = buildScenes,
-            target = BuildTarget.StandaloneLinux64,
+            target = buildTarget,
             subtarget = (int)StandaloneBuildSubtarget.Server,
             locationPathName = executablePath,
             options = BuildOptions.None
         };
 
-        Debug.Log($"Linux Dedicated Server build started. Output: {executablePath}");
+        Debug.Log($"Dedicated Server build started. Target: {buildTarget}. Output: {executablePath}");
         BuildReport report = BuildPipeline.BuildPlayer(options);
         if (report.summary.result != BuildResult.Succeeded)
-            throw new InvalidOperationException($"Linux Dedicated Server build failed: {report.summary.result}");
+            throw new InvalidOperationException($"Dedicated Server build failed: {report.summary.result}");
 
-        WriteLaunchScript(outputDirectory);
+        WriteLaunchScripts(outputDirectory, buildTarget);
         WriteRuntimeConfigTemplate(outputDirectory);
-        Debug.Log($"Linux Dedicated Server build completed successfully. Size: {report.summary.totalSize} bytes.");
+        Debug.Log($"Dedicated Server build completed successfully. Target: {buildTarget}. Size: {report.summary.totalSize} bytes.");
         return report;
     }
 
-    public static string GetExecutableFileName()
+    public static string GetExecutableFileName(BuildTarget buildTarget = BuildTarget.StandaloneLinux64)
     {
         string productName = string.IsNullOrWhiteSpace(PlayerSettings.productName)
             ? "RussianRoadRageServer"
             : PlayerSettings.productName + "Server";
-        return SanitizeFileName(productName);
+        string executableName = SanitizeFileName(productName);
+        return buildTarget == BuildTarget.StandaloneWindows64 ? executableName + ".exe" : executableName;
     }
 
     private static string[] GetCommandLineScenes()
@@ -98,6 +101,34 @@ public static class DedicatedServerBuildPipeline
         }
 
         return DefaultDedicatedScenes;
+    }
+
+    private static BuildTarget GetCommandLineTarget()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for (int index = 0; index < args.Length - 1; index++)
+        {
+            if (!string.Equals(args[index], DedicatedTargetArg, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return ParseBuildTarget(args[index + 1]);
+        }
+
+        return BuildTarget.StandaloneLinux64;
+    }
+
+    private static BuildTarget ParseBuildTarget(string rawTarget)
+    {
+        if (string.IsNullOrWhiteSpace(rawTarget))
+            return BuildTarget.StandaloneLinux64;
+
+        string normalized = rawTarget.Trim().ToLowerInvariant();
+        if (normalized == "windows" || normalized == "win" || normalized == "win64" || normalized == "standalonewindows64")
+            return BuildTarget.StandaloneWindows64;
+        if (normalized == "linux" || normalized == "linux64" || normalized == "standalonelinux64")
+            return BuildTarget.StandaloneLinux64;
+
+        throw new InvalidOperationException($"Unsupported dedicated target: {rawTarget}");
     }
 
     private static string[] ResolveScenes(string[] requestedScenes)
@@ -149,7 +180,7 @@ public static class DedicatedServerBuildPipeline
         }
     }
 
-    private static void WriteReleaseMetadata(string outputDirectory, BuildReport report, string[] scenes)
+    private static void WriteReleaseMetadata(string outputDirectory, BuildReport report, string[] scenes, BuildTarget buildTarget)
     {
         ReleaseMetadata metadata = new ReleaseMetadata
         {
@@ -157,10 +188,10 @@ public static class DedicatedServerBuildPipeline
             commit = Environment.GetEnvironmentVariable(ReleaseCommitEnvVar) ?? string.Empty,
             branch = Environment.GetEnvironmentVariable(ReleaseBranchEnvVar) ?? string.Empty,
             builtAtUtc = DateTime.UtcNow.ToString("O"),
-            target = BuildTarget.StandaloneLinux64.ToString(),
+            target = buildTarget.ToString(),
             subtarget = StandaloneBuildSubtarget.Server.ToString(),
             publicUrl = Environment.GetEnvironmentVariable(ReleasePublicUrlEnvVar) ?? string.Empty,
-            primaryArtifact = GetExecutableFileName(),
+            primaryArtifact = GetExecutableFileName(buildTarget),
             launchScript = "run.sh",
             totalSizeBytes = report.summary.totalSize,
             scenes = scenes ?? Array.Empty<string>()
@@ -171,15 +202,25 @@ public static class DedicatedServerBuildPipeline
             JsonUtility.ToJson(metadata, prettyPrint: true));
     }
 
-    private static void WriteLaunchScript(string outputDirectory)
+    private static void WriteLaunchScripts(string outputDirectory, BuildTarget buildTarget)
     {
         string scriptPath = Path.Combine(outputDirectory, "run.sh");
-        string executableName = GetExecutableFileName();
+        string executableName = GetExecutableFileName(buildTarget);
         string script = "#!/usr/bin/env sh\n" +
                         "set -eu\n" +
                         "SCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\n" +
                         $"exec \"$SCRIPT_DIR/{executableName}\" -batchmode -nographics \"$@\"\n";
         File.WriteAllText(scriptPath, script);
+
+        if (buildTarget != BuildTarget.StandaloneWindows64)
+            return;
+
+        string cmdPath = Path.Combine(outputDirectory, "run.cmd");
+        string cmdScript = "@echo off\r\n" +
+                           "setlocal\r\n" +
+                           "set SCRIPT_DIR=%~dp0\r\n" +
+                           $"\"%SCRIPT_DIR%{executableName}\" -batchmode -nographics %*\r\n";
+        File.WriteAllText(cmdPath, cmdScript);
     }
 
     private static void WriteRuntimeConfigTemplate(string outputDirectory)
