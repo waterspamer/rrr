@@ -277,6 +277,7 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         GetOrAddComponent<PurrVehicleLocalInputProvider>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehicleBotInputProvider>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehiclePredictedController>(runtimeTemplateObject);
+        GetOrAddComponent<PurrVehicleWheelPresentation>(runtimeTemplateObject);
 
         SafePredictedTransform predictedTransform = GetOrAddComponent<SafePredictedTransform>(runtimeTemplateObject);
         PredictedRigidbody predictedRigidbody = GetOrAddComponent<PredictedRigidbody>(runtimeTemplateObject);
@@ -291,6 +292,13 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         TransformInterpolationSettings settings = ScriptableObject.CreateInstance<TransformInterpolationSettings>();
         settings.hideFlags = HideFlags.HideAndDontSave;
         settings.name = "PurrVehicleRuntimeInterpolation";
+        settings.useInterpolation = true;
+        settings.positionInterpolation.correctionRateMinMax = new Vector2(3.3f, 10.0f);
+        settings.positionInterpolation.correctionBlendMinMax = new Vector2(0.0f, 4.0f);
+        settings.positionInterpolation.teleportThresholdMinMax = new Vector2(0.025f, 5.0f);
+        settings.rotationInterpolation.correctionRateMinMax = new Vector2(3.3f, 10.0f);
+        settings.rotationInterpolation.correctionBlendMinMax = new Vector2(5.0f, 30.0f);
+        settings.rotationInterpolation.teleportThresholdMinMax = new Vector2(1.5f, 52.0f);
         return settings;
     }
 
@@ -530,6 +538,7 @@ public sealed class SafePredictedTransform : PredictedTransform
 
 public static class PurrVehicleGraphicsBindingUtility
 {
+    private const string CollisionBodyRootName = "BodyCollisionRoot";
     private static readonly FieldInfo GraphicsField =
         typeof(PredictedTransform).GetField("_graphics", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -559,29 +568,40 @@ public static class PurrVehicleGraphicsBindingUtility
             return null;
 
         Transform body = root.Find("Body");
+        Transform collisionBodyRoot = root.Find(CollisionBodyRootName);
+        bool hasDetachedCollisionBody = collisionBodyRoot != null && collisionBodyRoot.GetComponentInChildren<Collider>(true) != null;
         if (body != null)
         {
             Transform bodyRoot = body.Find("Root");
+            if (hasDetachedCollisionBody)
+            {
+                if (IsDetachedBodyGraphicsRoot(bodyRoot))
+                    return bodyRoot;
+
+                if (IsDetachedBodyGraphicsRoot(body))
+                    return body;
+            }
+
             if (IsValidGraphicsRoot(bodyRoot))
                 return bodyRoot;
 
             if (IsValidGraphicsRoot(body))
                 return body;
+
+            Transform bestBodyCandidate = FindBestGraphicsRoot(body);
+            if (bestBodyCandidate != null)
+                return bestBodyCandidate;
         }
 
-        Transform[] all = root.GetComponentsInChildren<Transform>(true);
-        for (int i = 0; i < all.Length; i++)
-        {
-            if (all[i] != null && IsValidGraphicsRoot(all[i]))
-                return all[i];
-        }
-
-        return null;
+        return FindBestGraphicsRoot(root);
     }
 
     private static bool IsValidGraphicsRoot(Transform candidate)
     {
         if (candidate == null)
+            return false;
+
+        if (IsExcludedGraphicsCandidate(candidate))
             return false;
 
         if (candidate.GetComponentInChildren<Collider>(true) != null)
@@ -594,6 +614,81 @@ public static class PurrVehicleGraphicsBindingUtility
             return false;
 
         return candidate.GetComponentInChildren<Renderer>(true) != null;
+    }
+
+    private static bool IsDetachedBodyGraphicsRoot(Transform candidate)
+    {
+        return candidate != null &&
+               !IsExcludedGraphicsCandidate(candidate) &&
+               candidate.GetComponentInChildren<Renderer>(true) != null;
+    }
+
+    private static Transform FindBestGraphicsRoot(Transform searchRoot)
+    {
+        if (searchRoot == null)
+            return null;
+
+        Transform[] all = searchRoot.GetComponentsInChildren<Transform>(true);
+        Transform best = null;
+        int bestRendererCount = -1;
+        int bestDepth = int.MaxValue;
+
+        for (int i = 0; i < all.Length; i++)
+        {
+            Transform candidate = all[i];
+            if (!IsValidGraphicsRoot(candidate))
+                continue;
+
+            int rendererCount = candidate.GetComponentsInChildren<Renderer>(true).Length;
+            int depth = GetTransformDepth(searchRoot, candidate);
+            if (rendererCount > bestRendererCount || (rendererCount == bestRendererCount && depth < bestDepth))
+            {
+                best = candidate;
+                bestRendererCount = rendererCount;
+                bestDepth = depth;
+            }
+        }
+
+        return best;
+    }
+
+    private static int GetTransformDepth(Transform searchRoot, Transform candidate)
+    {
+        int depth = 0;
+        Transform current = candidate;
+        while (current != null && current != searchRoot)
+        {
+            depth += 1;
+            current = current.parent;
+        }
+
+        return depth;
+    }
+
+    private static bool IsExcludedGraphicsCandidate(Transform candidate)
+    {
+        if (candidate == null)
+            return true;
+
+        if (candidate.GetComponentInParent<WheelCollider>() != null)
+            return true;
+
+        Transform current = candidate;
+        while (current != null)
+        {
+            if (current.name == CollisionBodyRootName ||
+                current.name == "FrontLeft" ||
+                current.name == "FrontRight" ||
+                current.name == "RearLeft" ||
+                current.name == "RearRight")
+            {
+                return true;
+            }
+
+            current = current.parent;
+        }
+
+        return false;
     }
 }
 

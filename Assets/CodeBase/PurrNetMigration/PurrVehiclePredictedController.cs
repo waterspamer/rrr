@@ -265,3 +265,119 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         return PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
     }
 }
+
+[DefaultExecutionOrder(1100)]
+[DisallowMultipleComponent]
+[RequireComponent(typeof(SafePredictedTransform))]
+public sealed class PurrVehicleWheelPresentation : MonoBehaviour
+{
+    private struct WheelBinding
+    {
+        public WheelCollider collider;
+        public Transform visual;
+    }
+
+    [SerializeField] private SafePredictedTransform predictedTransform;
+    [SerializeField] private Transform vehicleRoot;
+
+    private readonly System.Collections.Generic.List<WheelBinding> wheelBindings =
+        new System.Collections.Generic.List<WheelBinding>(4);
+    private Transform graphicsRoot;
+    private Vector3 graphicsLocalPosition;
+    private Quaternion graphicsLocalRotation = Quaternion.identity;
+
+    private void Awake()
+    {
+        ResolveReferences();
+        RefreshBindings(force: true);
+    }
+
+    private void OnEnable()
+    {
+        RefreshBindings(force: true);
+    }
+
+    private void OnValidate()
+    {
+        ResolveReferences();
+    }
+
+    private void LateUpdate()
+    {
+        ResolveReferences();
+        RefreshBindings(force: false);
+
+        if (vehicleRoot == null || graphicsRoot == null || wheelBindings.Count == 0)
+            return;
+
+        Quaternion authoritativeRootRotation = vehicleRoot.rotation;
+        Vector3 authoritativeRootPosition = vehicleRoot.position;
+        Quaternion smoothedRootRotation = graphicsRoot.rotation * Quaternion.Inverse(graphicsLocalRotation);
+        Vector3 smoothedRootPosition = graphicsRoot.position - (smoothedRootRotation * graphicsLocalPosition);
+        Quaternion wheelVisualRotationOffset = Quaternion.Euler(0.0f, 0.0f, 90.0f);
+
+        for (int i = 0; i < wheelBindings.Count; i++)
+        {
+            WheelBinding binding = wheelBindings[i];
+            if (binding.collider == null || binding.visual == null)
+                continue;
+
+            binding.collider.GetWorldPose(out Vector3 colliderPosition, out Quaternion colliderRotation);
+            Vector3 localWheelPosition = Quaternion.Inverse(authoritativeRootRotation) * (colliderPosition - authoritativeRootPosition);
+            Quaternion localWheelRotation = Quaternion.Inverse(authoritativeRootRotation) * colliderRotation;
+            Vector3 smoothedWheelPosition = smoothedRootPosition + (smoothedRootRotation * localWheelPosition);
+            Quaternion smoothedWheelRotation = smoothedRootRotation * localWheelRotation * wheelVisualRotationOffset;
+            binding.visual.SetPositionAndRotation(smoothedWheelPosition, smoothedWheelRotation);
+        }
+    }
+
+    private void ResolveReferences()
+    {
+        if (predictedTransform == null)
+            predictedTransform = GetComponent<SafePredictedTransform>();
+        if (vehicleRoot == null)
+            vehicleRoot = transform;
+    }
+
+    private void RefreshBindings(bool force)
+    {
+        Transform targetGraphicsRoot = predictedTransform != null ? predictedTransform.graphics : null;
+        bool graphicsChanged = targetGraphicsRoot != graphicsRoot;
+        if (!force && !graphicsChanged && wheelBindings.Count > 0)
+            return;
+
+        graphicsRoot = targetGraphicsRoot;
+        if (graphicsRoot != null && vehicleRoot != null)
+        {
+            graphicsLocalPosition = vehicleRoot.InverseTransformPoint(graphicsRoot.position);
+            graphicsLocalRotation = Quaternion.Inverse(vehicleRoot.rotation) * graphicsRoot.rotation;
+        }
+
+        RebuildWheelBindings();
+    }
+
+    private void RebuildWheelBindings()
+    {
+        wheelBindings.Clear();
+
+        WheelCollider[] colliders = GetComponentsInChildren<WheelCollider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            WheelCollider wheelCollider = colliders[i];
+            if (wheelCollider == null)
+                continue;
+
+            Transform visual = wheelCollider.transform.Find("VisualRoot");
+            if (visual == null)
+                visual = wheelCollider.transform.Find("Visual");
+            if (visual == null)
+                continue;
+
+            wheelBindings.Add(new WheelBinding
+            {
+                collider = wheelCollider,
+                visual = visual
+            });
+        }
+    }
+}

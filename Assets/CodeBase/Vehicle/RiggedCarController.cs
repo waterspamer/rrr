@@ -4,6 +4,7 @@ using System.Collections.Generic;
 public class RiggedCarController : CarControllerBase
 {
     private const string WeaponTag = "Weapon";
+    private const string CollisionBodyRootName = "BodyCollisionRoot";
     private static bool webGlColliderWarningShown;
 
     [Header("Prefabs")]
@@ -88,6 +89,8 @@ public class RiggedCarController : CarControllerBase
 
     protected override void BuildCar()
     {
+        DestroyCollisionBodyRoot();
+
         if (bodyPrefab != null)
         {
             GameObject bodyInstance = Instantiate(bodyPrefab, transform);
@@ -172,6 +175,8 @@ public class RiggedCarController : CarControllerBase
 
     private void RebuildBody()
     {
+        DestroyCollisionBodyRoot();
+
         Transform existingBody = transform.Find("Body");
         if (existingBody != null)
             Destroy(existingBody.gameObject);
@@ -254,6 +259,31 @@ public class RiggedCarController : CarControllerBase
             bounds.size.z / Mathf.Max(0.0001f, lossyScale.z));
     }
 
+    private static void EnsureBodyColliderFromSource(GameObject targetRoot, GameObject sourceBody)
+    {
+        if (targetRoot == null || sourceBody == null)
+            return;
+
+        if (targetRoot.GetComponentInChildren<Collider>(true) != null)
+            return;
+
+        Renderer[] renderers = sourceBody.GetComponentsInChildren<Renderer>(true);
+        if (renderers == null || renderers.Length == 0)
+            return;
+
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            bounds.Encapsulate(renderers[i].bounds);
+
+        BoxCollider collider = targetRoot.AddComponent<BoxCollider>();
+        Vector3 lossyScale = targetRoot.transform.lossyScale;
+        collider.center = targetRoot.transform.InverseTransformPoint(bounds.center);
+        collider.size = new Vector3(
+            bounds.size.x / Mathf.Max(0.0001f, lossyScale.x),
+            bounds.size.y / Mathf.Max(0.0001f, lossyScale.y),
+            bounds.size.z / Mathf.Max(0.0001f, lossyScale.z));
+    }
+
     private static void DisableStaticFlags(GameObject root)
     {
         if (root == null)
@@ -280,43 +310,13 @@ public class RiggedCarController : CarControllerBase
             Destroy(existing);
         }
 
-        MeshFilter[] meshFilters = bodyInstance.GetComponentsInChildren<MeshFilter>(true);
-        for (int i = 0; i < meshFilters.Length; i++)
-        {
-            if (IsUnderTaggedTransform(meshFilters[i].transform, WeaponTag))
-                continue;
-
-            Mesh mesh = meshFilters[i].sharedMesh;
-            if (mesh == null)
-                continue;
-
-            MeshCollider collider = meshFilters[i].gameObject.AddComponent<MeshCollider>();
-            collider.sharedMesh = mesh;
-            collider.convex = true;
-        }
-
-        SkinnedMeshRenderer[] skinned = bodyInstance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-        for (int i = 0; i < skinned.Length; i++)
-        {
-            if (IsUnderTaggedTransform(skinned[i].transform, WeaponTag))
-                continue;
-
-            if (skinned[i].sharedMesh == null)
-                continue;
-
-            Mesh baked = new Mesh();
-            skinned[i].BakeMesh(baked);
-            MeshCollider collider = skinned[i].gameObject.AddComponent<MeshCollider>();
-            collider.sharedMesh = baked;
-            collider.convex = true;
-        }
-
-        if (bodyInstance.GetComponentsInChildren<Collider>(true).Length == 0)
-            EnsureBodyCollider(bodyInstance);
+        GameObject collisionRoot = RebuildCollisionBodyRoot(bodyInstance);
+        if (collisionRoot != null && collisionRoot.GetComponentsInChildren<Collider>(true).Length == 0)
+            EnsureBodyColliderFromSource(collisionRoot, bodyInstance);
 
         CarDamageController damageController = GetComponent<CarDamageController>();
         if (damageController != null)
-            damageController.ReinitializeFromBody(bodyInstance);
+            damageController.ReinitializeFromBody(collisionRoot != null ? collisionRoot : bodyInstance);
     }
 
     private static bool ShouldUseConvexBodyColliders(bool requested)
@@ -348,6 +348,88 @@ public class RiggedCarController : CarControllerBase
         }
 
         return false;
+    }
+
+    private GameObject RebuildCollisionBodyRoot(GameObject bodyInstance)
+    {
+        DestroyCollisionBodyRoot();
+        if (bodyInstance == null)
+            return null;
+
+        GameObject collisionRoot = new GameObject(CollisionBodyRootName);
+        collisionRoot.layer = bodyInstance.layer;
+        collisionRoot.transform.SetParent(transform, false);
+        collisionRoot.transform.localPosition = bodyInstance.transform.localPosition;
+        collisionRoot.transform.localRotation = bodyInstance.transform.localRotation;
+        collisionRoot.transform.localScale = bodyInstance.transform.localScale;
+
+        CopyCollisionHierarchy(bodyInstance.transform, collisionRoot.transform);
+        return collisionRoot;
+    }
+
+    private void DestroyCollisionBodyRoot()
+    {
+        Transform collisionRoot = transform.Find(CollisionBodyRootName);
+        if (collisionRoot == null)
+            return;
+
+        collisionRoot.gameObject.SetActive(false);
+        if (Application.isPlaying)
+            Destroy(collisionRoot.gameObject);
+        else
+            DestroyImmediate(collisionRoot.gameObject);
+    }
+
+    private void CopyCollisionHierarchy(Transform source, Transform target)
+    {
+        if (source == null || target == null)
+            return;
+
+        CopyCollisionGeometry(source, target);
+
+        for (int i = 0; i < source.childCount; i++)
+        {
+            Transform child = source.GetChild(i);
+            if (child == null || IsUnderTaggedTransform(child, WeaponTag))
+                continue;
+
+            GameObject clone = new GameObject(child.name);
+            clone.layer = child.gameObject.layer;
+            clone.tag = child.gameObject.tag;
+            clone.SetActive(child.gameObject.activeSelf);
+
+            Transform cloneTransform = clone.transform;
+            cloneTransform.SetParent(target, false);
+            cloneTransform.localPosition = child.localPosition;
+            cloneTransform.localRotation = child.localRotation;
+            cloneTransform.localScale = child.localScale;
+
+            CopyCollisionHierarchy(child, cloneTransform);
+        }
+    }
+
+    private static void CopyCollisionGeometry(Transform source, Transform target)
+    {
+        if (source == null || target == null)
+            return;
+
+        MeshFilter meshFilter = source.GetComponent<MeshFilter>();
+        if (meshFilter != null && meshFilter.sharedMesh != null)
+        {
+            MeshCollider collider = target.gameObject.AddComponent<MeshCollider>();
+            collider.sharedMesh = meshFilter.sharedMesh;
+            collider.convex = true;
+        }
+
+        SkinnedMeshRenderer skinnedRenderer = source.GetComponent<SkinnedMeshRenderer>();
+        if (skinnedRenderer != null && skinnedRenderer.sharedMesh != null)
+        {
+            Mesh baked = new Mesh();
+            skinnedRenderer.BakeMesh(baked);
+            MeshCollider collider = target.gameObject.AddComponent<MeshCollider>();
+            collider.sharedMesh = baked;
+            collider.convex = true;
+        }
     }
 
     private void ApplyBodySetToCurrentBody()

@@ -8,6 +8,7 @@ using UnityEngine.Rendering.Universal;
 using UnityEngine.InputSystem;
 #endif
 
+[DefaultExecutionOrder(1200)]
 public class FollowCarCamera : MonoBehaviour
 {
     [Header("Target")]
