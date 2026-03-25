@@ -200,7 +200,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
     private void ConfigureAuthorityState()
     {
         if (damageController != null)
-            damageController.SetCollisionDamageEnabled(predictionManager == null || isServer);
+            damageController.SetCollisionDamageEnabled(predictionManager == null || isServer || IsOwner());
     }
 
     private void RefreshViewBindings()

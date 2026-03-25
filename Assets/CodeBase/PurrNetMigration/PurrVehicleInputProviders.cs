@@ -167,6 +167,7 @@ public sealed class PurrVehicleLocalInputProvider : MonoBehaviour, IPurrVehicleI
 [DisallowMultipleComponent]
 public sealed class PurrVehicleBotInputProvider : MonoBehaviour, IPurrVehicleInputProvider
 {
+    [SerializeField] private bool stayStationary = true;
     [SerializeField, Range(0.1f, 1.0f)] private float cruiseThrottle = 0.72f;
     [SerializeField, Range(0.0f, 0.75f)] private float steerAmplitude = 0.18f;
     [SerializeField, Range(0.05f, 1.5f)] private float steerFrequency = 0.22f;
@@ -184,6 +185,18 @@ public sealed class PurrVehicleBotInputProvider : MonoBehaviour, IPurrVehicleInp
 
     private PurrVehiclePredictedInput BuildInput()
     {
+        if (stayStationary)
+        {
+            return new PurrVehiclePredictedInput
+            {
+                motor = 0.0f,
+                steer = 0.0f,
+                brake = true,
+                handbrake = true,
+                nitro = false
+            };
+        }
+
         float phaseOffset = (gameObject.GetInstanceID() & 255) * 0.013f;
         PurrVehiclePredictedInput input = new PurrVehiclePredictedInput
         {
