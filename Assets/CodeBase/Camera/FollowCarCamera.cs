@@ -236,6 +236,11 @@ public class FollowCarCamera : MonoBehaviour
             smoothedLookRotation = lookRot;
         }
 
+        if (!positionShakeTween.isAlive)
+            shakeLocalPosition = Vector3.zero;
+        if (!rotationShakeTween.isAlive)
+            shakeLocalRotation = Vector3.zero;
+
         transform.position = smoothedOrbitPosition + (smoothedLookRotation * shakeLocalPosition);
         transform.rotation = smoothedLookRotation * Quaternion.Euler(shakeLocalRotation);
 
@@ -557,26 +562,32 @@ public class FollowCarCamera : MonoBehaviour
 
     private void PlayShake(Vector3 positionStrength, Vector3 rotationStrength, float duration, int frequency)
     {
-        if (positionShakeTween.isAlive)
-            positionShakeTween.Stop();
-        if (rotationShakeTween.isAlive)
-            rotationShakeTween.Stop();
+        StopActiveShake(resetOffsets: true);
 
         var settingsPos = new ShakeSettings(positionStrength, duration, frequency);
-        positionShakeTween = Tween.ShakeCustom(this, shakeLocalPosition, settingsPos, SetShakeLocalPosition);
+        positionShakeTween = Tween.ShakeCustom(this, Vector3.zero, settingsPos, SetShakeLocalPosition);
 
         var settingsRot = new ShakeSettings(rotationStrength, duration, frequency);
-        rotationShakeTween = Tween.ShakeCustom(this, shakeLocalRotation, settingsRot, SetShakeLocalRotation);
+        rotationShakeTween = Tween.ShakeCustom(this, Vector3.zero, settingsRot, SetShakeLocalRotation);
     }
 
-    private void OnDisable()
+    private void StopActiveShake(bool resetOffsets)
     {
         if (positionShakeTween.isAlive)
             positionShakeTween.Stop();
         if (rotationShakeTween.isAlive)
             rotationShakeTween.Stop();
+
+        if (!resetOffsets)
+            return;
+
         shakeLocalPosition = Vector3.zero;
         shakeLocalRotation = Vector3.zero;
+    }
+
+    private void OnDisable()
+    {
+        StopActiveShake(resetOffsets: true);
     }
 
     private void UpdateFovBySpeed()

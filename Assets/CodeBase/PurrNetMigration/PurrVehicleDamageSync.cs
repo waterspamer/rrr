@@ -82,7 +82,6 @@ public struct PurrVehicleCollisionEventMessage : IPackedAuto
 [DisallowMultipleComponent]
 public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 {
-    private const float LocalCollisionDedupeWindow = 0.35f;
     private const float ServerCollisionDedupeWindow = 0.05f;
 
     [SerializeField, Min(0.1f)] private float refreshIntervalSeconds = 0.35f;
@@ -517,25 +516,9 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             return;
 
         string pairKey = BuildCollisionPairKey(message.primaryPlayerId, message.secondaryPlayerId);
-        if (recentLocalCollisions.TryGetValue(pairKey, out float recentTime) &&
-            Time.unscaledTime - recentTime <= LocalCollisionDedupeWindow)
-        {
-            return;
-        }
-
-        if (!TryGetLocalDamageController(localPlayerId, out CarDamageController damageController) || damageController == null)
-            return;
-
-        if (damageController.ApplySyntheticCollisionDamage(
-                message.worldPoint,
-                message.worldNormal,
-                message.relativeVelocity,
-                message.impulseMagnitude,
-                $"network collision {message.primaryPlayerId}->{message.secondaryPlayerId}",
-                notifyNetwork: true))
-        {
-            recentLocalCollisions[pairKey] = Time.unscaledTime;
-        }
+        // The owner already applied collision damage and camera shake locally.
+        // Replaying the relayed server collision causes duplicate shake and can double-apply impact damage.
+        recentLocalCollisions[pairKey] = Time.unscaledTime;
     }
 
     private void ApplySnapshotsToSpawnedEntities()
@@ -613,31 +596,6 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         }
 
         clientSubscriptions.Clear();
-    }
-
-    private static bool TryGetLocalDamageController(string localPlayerId, out CarDamageController damageController)
-    {
-        NetworkVehicleEntity[] entities =
-            FindObjectsByType<NetworkVehicleEntity>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        for (int i = 0; i < entities.Length; i++)
-        {
-            NetworkVehicleEntity entity = entities[i];
-            if (entity == null)
-                continue;
-
-            damageController = entity.GetComponent<CarDamageController>();
-            if (damageController == null)
-                damageController = entity.GetComponentInParent<CarDamageController>();
-            if (damageController == null)
-                continue;
-            if (!entity.IsLocalPlayer && !MatchesPlayerId(entity, damageController, localPlayerId))
-                continue;
-            if (damageController != null)
-                return true;
-        }
-
-        damageController = null;
-        return false;
     }
 
     private static bool TryResolvePlayerId(CarDamageController damageController, NetworkVehicleEntity entity, out string playerId)
