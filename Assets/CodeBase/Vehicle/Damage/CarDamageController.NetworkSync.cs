@@ -90,6 +90,42 @@ public partial class CarDamageController
         }
     }
 
+    public float EstimateDamageFraction()
+    {
+        try
+        {
+            EnsureNetworkTextureReady();
+        }
+        catch
+        {
+            return 0.0f;
+        }
+
+        if (cpuTexture == null)
+            return 0.0f;
+
+        try
+        {
+            Color32[] pixels = cpuTexture.GetPixels32();
+            if (pixels == null || pixels.Length == 0)
+                return 0.0f;
+
+            float total = 0.0f;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                Color32 pixel = pixels[i];
+                float intensity = Mathf.Max(pixel.r, Mathf.Max(pixel.g, pixel.b)) / 255.0f;
+                total += intensity;
+            }
+
+            return Mathf.Clamp01(total / pixels.Length);
+        }
+        catch
+        {
+            return 0.0f;
+        }
+    }
+
     public void ApplyNetworkDamageSnapshot(CarDamageNetworkSnapshot snapshot, DamageManager managerOverride = null)
     {
         if (snapshot == null || snapshot.rawBytes == null)
