@@ -668,6 +668,9 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         UpdateObserverLoadout(player, payload);
         Debug.Log($"PurrVehicleSceneSpawner: received loadout '{payload.loadoutName}' for player {player}.", this);
 
+        if (!player.isBot && !player.isServer)
+            MirrorHumanLoadoutToBots(payload);
+
         if (!spawnedPlayers.TryGetValue(player, out PredictedObjectID objectId))
             return;
 
@@ -683,8 +686,18 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
 
     private bool TryApplyLoadout(PlayerID player, PlayerCar spawnedCar, GameObject instance)
     {
-        if (spawnedCar == null || !playerLoadouts.TryGetValue(player, out PlayerCarSelectionPayload payload) || payload == null)
+        if (spawnedCar == null || !TryResolveLoadoutPayload(player, out PlayerCarSelectionPayload payload) || payload == null)
             return false;
+
+        if (player.isBot)
+        {
+            PlayerCarSelectionPayload botPayload = ClonePayload(payload);
+            if (botPayload != null)
+            {
+                payload = botPayload;
+                playerLoadouts[player] = botPayload;
+            }
+        }
 
         CarLoadoutConfig loadout = PlayerCarLoadoutUtility.ApplySelectedLoadout(spawnedCar, payload);
         if (instance.TryGetComponent(out SafePredictedTransform predictedTransform))
@@ -709,6 +722,62 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
             groundProbeDistance,
             instance.transform);
         instance.transform.SetPositionAndRotation(groundedSpawnPosition, instance.transform.rotation);
+    }
+
+    private bool TryResolveLoadoutPayload(PlayerID player, out PlayerCarSelectionPayload payload)
+    {
+        if (playerLoadouts.TryGetValue(player, out payload) && payload != null)
+            return true;
+
+        if (!player.isBot)
+        {
+            payload = null;
+            return false;
+        }
+
+        foreach (KeyValuePair<PlayerID, PlayerCarSelectionPayload> pair in playerLoadouts)
+        {
+            if (pair.Key.isBot || pair.Key.isServer || pair.Value == null)
+                continue;
+
+            payload = pair.Value;
+            return true;
+        }
+
+        payload = null;
+        return false;
+    }
+
+    private void MirrorHumanLoadoutToBots(PlayerCarSelectionPayload payload)
+    {
+        if (payload == null || botPlayers.Count == 0)
+            return;
+
+        for (int i = 0; i < botPlayers.Count; i++)
+        {
+            PlayerID bot = botPlayers[i];
+            PlayerCarSelectionPayload botPayload = ClonePayload(payload);
+            if (botPayload == null)
+                continue;
+
+            playerLoadouts[bot] = botPayload;
+            UpdateObserverLoadout(bot, botPayload);
+
+            if (!spawnedPlayers.TryGetValue(bot, out PredictedObjectID objectId))
+                continue;
+
+            if (predictionManager == null || predictionManager.hierarchy == null)
+                continue;
+
+            if (!predictionManager.hierarchy.TryGetGameObject(objectId, out GameObject instance) || instance == null)
+                continue;
+
+            if (!instance.TryGetComponent(out PlayerCar spawnedCar))
+                continue;
+
+            if (TryApplyLoadout(bot, spawnedCar, instance))
+                RegroundSpawnedCar(spawnedCar, instance);
+        }
     }
 
     private int ComputeSpawnSlot(PlayerID player)
