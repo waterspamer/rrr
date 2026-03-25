@@ -78,6 +78,272 @@ public struct PurrVehicleCollisionEventMessage : IPackedAuto
     public float impulseMagnitude;
 }
 
+[Serializable]
+public struct PurrVehicleDamageConfigMessage : IPackedAuto
+{
+    public string configJson;
+
+    public static PurrVehicleDamageConfigMessage FromConfig(CarDamageRuntimeTuning config)
+    {
+        return new PurrVehicleDamageConfigMessage
+        {
+            configJson = config != null ? JsonUtility.ToJson(config) : string.Empty
+        };
+    }
+
+    public CarDamageRuntimeTuning ToConfig()
+    {
+        if (string.IsNullOrWhiteSpace(configJson))
+            return null;
+
+        try
+        {
+            CarDamageRuntimeTuning config = JsonUtility.FromJson<CarDamageRuntimeTuning>(configJson);
+            config?.Validate();
+            return config;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"PurrVehicleDamageConfigMessage: failed to deserialize config. {ex.Message}");
+            return null;
+        }
+    }
+}
+
+[DefaultExecutionOrder(360)]
+[DisallowMultipleComponent]
+public sealed class PurrVehicleDamageConfigSync : PurrMonoBehaviour
+{
+    [SerializeField] private PlayerCar templateCar;
+    [SerializeField, Min(0.05f)] private float refreshIntervalSeconds = 0.25f;
+
+    private readonly Dictionary<int, int> appliedRevisionsByController = new Dictionary<int, int>();
+
+    private NetworkManager activeManager;
+    private PlayersManager playersManager;
+    private bool isServerAuthority;
+    private float nextRefreshAt;
+    private CarDamageRuntimeTuning currentConfig;
+
+    public void Configure(PlayerCar template)
+    {
+        templateCar = template;
+        EnsureDefaultConfig();
+    }
+
+    public bool TryGetCurrentConfig(out CarDamageRuntimeTuning config)
+    {
+        EnsureDefaultConfig();
+        if (currentConfig == null)
+        {
+            config = null;
+            return false;
+        }
+
+        config = currentConfig.Clone();
+        return config != null;
+    }
+
+    public bool TryUpdateServerConfig(CarDamageRuntimeTuning requested, string source = "observer_admin")
+    {
+        if (!isServerAuthority || requested == null)
+            return false;
+
+        CarDamageRuntimeTuning next = requested.Clone();
+        if (next == null)
+            return false;
+
+        int previousRevision = currentConfig != null ? currentConfig.revision : 0;
+        next.revision = previousRevision + 1;
+        next.updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        next.source = string.IsNullOrWhiteSpace(source) ? "observer_admin" : source.Trim();
+        next.Validate();
+
+        currentConfig = next;
+        ApplyConfigToActiveDamageControllers(force: true);
+        BroadcastCurrentConfig();
+        return true;
+    }
+
+    private void Update()
+    {
+        ResolveReferences();
+        EnsureDefaultConfig();
+
+        if (Time.unscaledTime < nextRefreshAt)
+            return;
+
+        nextRefreshAt = Time.unscaledTime + refreshIntervalSeconds;
+        ApplyConfigToActiveDamageControllers(force: false);
+    }
+
+    public override void Subscribe(NetworkManager manager, bool asServer)
+    {
+        activeManager = manager;
+        ResolveReferences();
+
+        if (playersManager != null)
+            playersManager.Subscribe<PurrVehicleDamageConfigMessage>(OnConfigMessage);
+
+        if (asServer)
+        {
+            isServerAuthority = true;
+            manager.onPlayerLoadedScene += OnPlayerLoadedScene;
+            EnsureDefaultConfig();
+            ApplyConfigToActiveDamageControllers(force: true);
+            BroadcastCurrentConfig();
+            return;
+        }
+
+    }
+
+    public override void Unsubscribe(NetworkManager manager, bool asServer)
+    {
+        if (playersManager != null)
+            playersManager.Unsubscribe<PurrVehicleDamageConfigMessage>(OnConfigMessage);
+
+        if (asServer)
+        {
+            manager.onPlayerLoadedScene -= OnPlayerLoadedScene;
+            isServerAuthority = false;
+        }
+
+        activeManager = null;
+    }
+
+    private void ResolveReferences()
+    {
+        if (activeManager == null)
+            return;
+
+        if (playersManager == null)
+        {
+            if (!activeManager.TryGetModule(out playersManager, true))
+                activeManager.TryGetModule(out playersManager, false);
+        }
+    }
+
+    private void EnsureDefaultConfig()
+    {
+        if (currentConfig != null)
+            return;
+
+        currentConfig = CaptureDefaultConfig();
+        if (currentConfig == null)
+            return;
+
+        currentConfig.revision = Mathf.Max(1, currentConfig.revision);
+        if (currentConfig.updatedAtUnixMs <= 0)
+            currentConfig.updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (string.IsNullOrWhiteSpace(currentConfig.source))
+            currentConfig.source = "car_config";
+        currentConfig.Validate();
+    }
+
+    private CarDamageRuntimeTuning CaptureDefaultConfig()
+    {
+        if (templateCar == null)
+            templateCar = FindFirstObjectByType<PlayerCar>(FindObjectsInactive.Include);
+
+        if (templateCar != null)
+        {
+            if (templateCar.Config != null && templateCar.Config.Damage != null)
+                return CarDamageRuntimeTuning.FromSettings(templateCar.Config.Damage);
+
+            if (templateCar.DamageController != null)
+                return templateCar.DamageController.CaptureRuntimeTuning();
+        }
+
+        CarDamageController firstController = FindFirstObjectByType<CarDamageController>(FindObjectsInactive.Include);
+        return firstController != null ? firstController.CaptureRuntimeTuning() : null;
+    }
+
+    private void ApplyConfigToActiveDamageControllers(bool force)
+    {
+        if (currentConfig == null)
+            return;
+
+        CarDamageController[] controllers =
+            FindObjectsByType<CarDamageController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        HashSet<int> activeKeys = new HashSet<int>();
+
+        for (int i = 0; i < controllers.Length; i++)
+        {
+            CarDamageController controller = controllers[i];
+            if (controller == null || !controller.gameObject.activeInHierarchy)
+                continue;
+
+            int key = controller.GetInstanceID();
+            activeKeys.Add(key);
+
+            if (!force &&
+                appliedRevisionsByController.TryGetValue(key, out int appliedRevision) &&
+                appliedRevision == currentConfig.revision)
+            {
+                CarDamageRuntimeTuning activeTuning = controller.CaptureRuntimeTuning();
+                if (activeTuning != null && activeTuning.IsEquivalentTo(currentConfig))
+                    continue;
+            }
+
+            controller.ApplyRuntimeTuning(currentConfig);
+            appliedRevisionsByController[key] = currentConfig.revision;
+        }
+
+        if (appliedRevisionsByController.Count == 0)
+            return;
+
+        List<int> staleKeys = new List<int>();
+        foreach (KeyValuePair<int, int> pair in appliedRevisionsByController)
+        {
+            if (!activeKeys.Contains(pair.Key))
+                staleKeys.Add(pair.Key);
+        }
+
+        for (int i = 0; i < staleKeys.Count; i++)
+            appliedRevisionsByController.Remove(staleKeys[i]);
+    }
+
+    private void OnPlayerLoadedScene(PlayerID player, SceneID scene, bool asServer)
+    {
+        if (!asServer)
+            return;
+
+        SendCurrentConfig(player);
+    }
+
+    private void OnConfigMessage(PlayerID player, PurrVehicleDamageConfigMessage message, bool asServer)
+    {
+        if (asServer)
+            return;
+
+        CarDamageRuntimeTuning config = message.ToConfig();
+        if (config == null)
+            return;
+
+        if (currentConfig != null && currentConfig.revision >= config.revision)
+            return;
+
+        currentConfig = config;
+        ApplyConfigToActiveDamageControllers(force: true);
+    }
+
+    private void BroadcastCurrentConfig()
+    {
+        if (playersManager == null || currentConfig == null || !isServerAuthority)
+            return;
+
+        playersManager.SendToAll(PurrVehicleDamageConfigMessage.FromConfig(currentConfig), Channel.ReliableOrdered);
+    }
+
+    private void SendCurrentConfig(PlayerID player)
+    {
+        if (playersManager == null || currentConfig == null || !isServerAuthority)
+            return;
+
+        playersManager.Send(player, PurrVehicleDamageConfigMessage.FromConfig(currentConfig), Channel.ReliableOrdered);
+    }
+}
+
 [DefaultExecutionOrder(370)]
 [DisallowMultipleComponent]
 public sealed class PurrVehicleDamageSync : PurrMonoBehaviour

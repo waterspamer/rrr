@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -121,13 +122,19 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
     {
         try
         {
+            string method = context.Request.HttpMethod.ToUpperInvariant();
+            if (method == "OPTIONS")
+            {
+                await WriteOptionsAsync(context.Response);
+                return;
+            }
+
             if (!IsAuthorized(context.Request))
             {
                 await WriteJsonAsync(context.Response, 401, "{\"code\":\"UNAUTHORIZED\",\"message\":\"Invalid service token\"}");
                 return;
             }
 
-            string method = context.Request.HttpMethod.ToUpperInvariant();
             string[] segments = GetPathSegments(context.Request);
 
             if (segments.Length == 1 && string.Equals(segments[0], "health", StringComparison.OrdinalIgnoreCase) && method == "GET")
@@ -170,6 +177,26 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
                     ObserverRoomSnapshotResponse payload = await RunOnMainThreadAsync(BuildSnapshot);
                     await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
                     return;
+                }
+
+                if (segments.Length == 5 &&
+                    string.Equals(segments[4], "damage-config", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (method == "GET")
+                    {
+                        ObserverDamageConfigState payload = await RunOnMainThreadAsync(BuildDamageConfigResponse);
+                        await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
+                        return;
+                    }
+
+                    if (method == "PUT")
+                    {
+                        string requestBody = await ReadRequestBodyAsync(context.Request);
+                        ObserverDamageConfigState requestPayload = ParseRequestBody<ObserverDamageConfigState>(requestBody);
+                        ObserverDamageConfigState payload = await RunOnMainThreadAsync(() => UpdateDamageConfig(requestPayload));
+                        await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
+                        return;
+                    }
                 }
             }
 
@@ -264,6 +291,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             status = context.status,
             server_tick = context.serverTick,
             server_time = serverTime,
+            damage_config = ObserverDamageConfigState.FromRuntime(context.damageConfig),
             observer = BuildObserverDebugState(context, serverTime)
         };
 
@@ -301,6 +329,33 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             response.collisions.AddRange(recentCollisions);
 
         return response;
+    }
+
+    private ObserverDamageConfigState BuildDamageConfigResponse()
+    {
+        PurrVehicleDamageConfigSync sync = FindFirstObjectByType<PurrVehicleDamageConfigSync>(FindObjectsInactive.Include);
+        if (sync == null || !sync.TryGetCurrentConfig(out CarDamageRuntimeTuning config) || config == null)
+            throw new ObserverApiException(404, "DAMAGE_CONFIG_NOT_FOUND", "Damage config not found");
+
+        return ObserverDamageConfigState.FromRuntime(config);
+    }
+
+    private ObserverDamageConfigState UpdateDamageConfig(ObserverDamageConfigState request)
+    {
+        if (request == null)
+            throw new ObserverApiException(400, "INVALID_REQUEST", "damage config payload is required");
+
+        PurrVehicleDamageConfigSync sync = FindFirstObjectByType<PurrVehicleDamageConfigSync>(FindObjectsInactive.Include);
+        if (sync == null)
+            throw new ObserverApiException(503, "DAMAGE_CONFIG_UNAVAILABLE", "Damage config sync is unavailable");
+
+        if (!sync.TryUpdateServerConfig(request.ToRuntime(), "observer_admin"))
+            throw new ObserverApiException(409, "CONFIG_UPDATE_REJECTED", "Damage config update was rejected");
+
+        if (!sync.TryGetCurrentConfig(out CarDamageRuntimeTuning applied) || applied == null)
+            throw new ObserverApiException(500, "CONFIG_UPDATE_FAILED", "Damage config update did not persist");
+
+        return ObserverDamageConfigState.FromRuntime(applied);
     }
 
     private ObserverPlayerState BuildPlayerState(PlayerObserverContext playerContext, int index, long serverTime)
@@ -364,7 +419,8 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             active_scene_id = context.spawnerState != null ? context.spawnerState.activeSceneId : string.Empty,
             started_at_utc = startedAtUtc.ToString("O"),
             uptime_sec = Mathf.Max(0.0f, Time.realtimeSinceStartup - startedAtRealtime),
-            room_visible = context.roomVisible
+            room_visible = context.roomVisible,
+            damage_config = ObserverDamageConfigState.FromRuntime(context.damageConfig)
         };
 
         debug.network.server_state = context.serverState;
@@ -557,7 +613,11 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         PredictionManager predictionManager = FindFirstObjectByType<PredictionManager>(FindObjectsInactive.Include);
         PurrVehicleSceneSpawner spawner = FindFirstObjectByType<PurrVehicleSceneSpawner>(FindObjectsInactive.Include);
         PurrVehiclePlayerRoster roster = FindFirstObjectByType<PurrVehiclePlayerRoster>(FindObjectsInactive.Include);
+        PurrVehicleDamageConfigSync damageConfigSync = FindFirstObjectByType<PurrVehicleDamageConfigSync>(FindObjectsInactive.Include);
         PurrVehicleSpawnerObserverSnapshot spawnerState = spawner != null ? spawner.CaptureObserverState() : null;
+        CarDamageRuntimeTuning damageConfig = null;
+        if (damageConfigSync != null)
+            damageConfigSync.TryGetCurrentConfig(out damageConfig);
 
         ObserverSnapshotContext context = new ObserverSnapshotContext
         {
@@ -565,6 +625,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             transport = transport,
             predictionManager = predictionManager,
             spawnerState = spawnerState,
+            damageConfig = damageConfig != null ? damageConfig.Clone() : null,
             sceneName = SceneManager.GetActiveScene().name,
             serverState = networkManager != null ? networkManager.serverState.ToString() : "Disconnected",
             clientState = networkManager != null ? networkManager.clientState.ToString() : "Disconnected",
@@ -826,6 +887,48 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         return path.Trim('/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
     }
 
+    private static async Task<string> ReadRequestBodyAsync(HttpListenerRequest request)
+    {
+        if (request == null || request.InputStream == null)
+            return string.Empty;
+
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8))
+            return await reader.ReadToEndAsync();
+    }
+
+    private static T ParseRequestBody<T>(string json) where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            throw new ObserverApiException(400, "INVALID_REQUEST", "Request body is required");
+
+        try
+        {
+            T payload = JsonUtility.FromJson<T>(json);
+            if (payload == null)
+                throw new ObserverApiException(400, "INVALID_REQUEST", "Invalid JSON body");
+            return payload;
+        }
+        catch (ObserverApiException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new ObserverApiException(400, "INVALID_REQUEST", "Invalid JSON body: " + ex.Message);
+        }
+    }
+
+    private static Task WriteOptionsAsync(HttpListenerResponse response)
+    {
+        response.StatusCode = 204;
+        response.Headers["Access-Control-Allow-Origin"] = "*";
+        response.Headers["Access-Control-Allow-Methods"] = "GET, PUT, OPTIONS";
+        response.Headers["Access-Control-Allow-Headers"] = "Content-Type, X-RRR-Service-Token";
+        response.ContentLength64 = 0;
+        response.OutputStream.Close();
+        return Task.CompletedTask;
+    }
+
     private static async Task WriteJsonAsync(HttpListenerResponse response, int statusCode, string json)
     {
         byte[] payload = Encoding.UTF8.GetBytes(string.IsNullOrWhiteSpace(json) ? "{}" : json);
@@ -833,6 +936,8 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         response.ContentType = "application/json; charset=utf-8";
         response.ContentEncoding = Encoding.UTF8;
         response.Headers["Access-Control-Allow-Origin"] = "*";
+        response.Headers["Access-Control-Allow-Methods"] = "GET, PUT, OPTIONS";
+        response.Headers["Access-Control-Allow-Headers"] = "Content-Type, X-RRR-Service-Token";
         response.ContentLength64 = payload.LongLength;
         await response.OutputStream.WriteAsync(payload, 0, payload.Length);
         response.OutputStream.Close();
@@ -876,6 +981,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public UDPTransport transport;
         public PredictionManager predictionManager;
         public PurrVehicleSpawnerObserverSnapshot spawnerState;
+        public CarDamageRuntimeTuning damageConfig;
         public string sceneName;
         public string serverState;
         public string clientState;
@@ -1014,6 +1120,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public List<ObserverPlayerState> players = new List<ObserverPlayerState>();
         public List<ObserverDamageState> damage_states = new List<ObserverDamageState>();
         public List<ObserverCollisionEvent> collisions = new List<ObserverCollisionEvent>();
+        public ObserverDamageConfigState damage_config;
         public ObserverRoomDebugState observer = new ObserverRoomDebugState();
     }
 
@@ -1078,11 +1185,120 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public string started_at_utc;
         public float uptime_sec;
         public bool room_visible;
+        public ObserverDamageConfigState damage_config;
         public ObserverNetworkDebugState network = new ObserverNetworkDebugState();
         public ObserverPredictionDebugState prediction = new ObserverPredictionDebugState();
         public ObserverSpawnerDebugState spawner = new ObserverSpawnerDebugState();
         public ObserverCountsDebugState counts = new ObserverCountsDebugState();
         public List<ObserverTrackedPlayerState> tracked_players = new List<ObserverTrackedPlayerState>();
+    }
+
+    [Serializable]
+    private sealed class ObserverDamageConfigState
+    {
+        public int version = CarDamageRuntimeTuning.CurrentVersion;
+        public int revision;
+        public long updated_at_unix_ms;
+        public string source;
+        public string obstacle_tag;
+        public float impulse_to_color;
+        public float max_color_step;
+        public float impulse_to_radius;
+        public float impulse_from_speed_factor;
+        public int max_radius_cells;
+        public float min_speed_for_damage_kmh;
+        public float max_speed_for_damage_kmh;
+        public float min_damage_scale;
+        public float glancing_damage_scale;
+        public float impact_alignment_power;
+        public float speed_radius_boost;
+        public float compute_deform_amplitude;
+        public float compute_deform_direction;
+        public float compute_deform_sin_frequency;
+        public float compute_deform_sin_strength;
+        public float compute_yield_threshold;
+        public float compute_hardening;
+        public float compute_max_deform;
+        public bool compute_two_level_damage;
+        public int compute_coarse_radius;
+        public float compute_coarse_weight;
+        public float compute_coarse_boost;
+        public float compute_coarse_deform_meters;
+
+        public static ObserverDamageConfigState FromRuntime(CarDamageRuntimeTuning config)
+        {
+            if (config == null)
+                return null;
+
+            return new ObserverDamageConfigState
+            {
+                version = config.version,
+                revision = config.revision,
+                updated_at_unix_ms = config.updatedAtUnixMs,
+                source = config.source,
+                obstacle_tag = config.obstacleTag,
+                impulse_to_color = config.impulseToColor,
+                max_color_step = config.maxColorStep,
+                impulse_to_radius = config.impulseToRadius,
+                impulse_from_speed_factor = config.impulseFromSpeedFactor,
+                max_radius_cells = config.maxRadiusCells,
+                min_speed_for_damage_kmh = config.minSpeedForDamageKmh,
+                max_speed_for_damage_kmh = config.maxSpeedForDamageKmh,
+                min_damage_scale = config.minDamageScale,
+                glancing_damage_scale = config.glancingDamageScale,
+                impact_alignment_power = config.impactAlignmentPower,
+                speed_radius_boost = config.speedRadiusBoost,
+                compute_deform_amplitude = config.computeDeformAmplitude,
+                compute_deform_direction = config.computeDeformDirection,
+                compute_deform_sin_frequency = config.computeDeformSinFrequency,
+                compute_deform_sin_strength = config.computeDeformSinStrength,
+                compute_yield_threshold = config.computeYieldThreshold,
+                compute_hardening = config.computeHardening,
+                compute_max_deform = config.computeMaxDeform,
+                compute_two_level_damage = config.computeTwoLevelDamage,
+                compute_coarse_radius = config.computeCoarseRadius,
+                compute_coarse_weight = config.computeCoarseWeight,
+                compute_coarse_boost = config.computeCoarseBoost,
+                compute_coarse_deform_meters = config.computeCoarseDeformMeters
+            };
+        }
+
+        public CarDamageRuntimeTuning ToRuntime()
+        {
+            CarDamageRuntimeTuning config = new CarDamageRuntimeTuning
+            {
+                version = version,
+                revision = revision,
+                updatedAtUnixMs = updated_at_unix_ms,
+                source = source,
+                obstacleTag = obstacle_tag,
+                impulseToColor = impulse_to_color,
+                maxColorStep = max_color_step,
+                impulseToRadius = impulse_to_radius,
+                impulseFromSpeedFactor = impulse_from_speed_factor,
+                maxRadiusCells = max_radius_cells,
+                minSpeedForDamageKmh = min_speed_for_damage_kmh,
+                maxSpeedForDamageKmh = max_speed_for_damage_kmh,
+                minDamageScale = min_damage_scale,
+                glancingDamageScale = glancing_damage_scale,
+                impactAlignmentPower = impact_alignment_power,
+                speedRadiusBoost = speed_radius_boost,
+                computeDeformAmplitude = compute_deform_amplitude,
+                computeDeformDirection = compute_deform_direction,
+                computeDeformSinFrequency = compute_deform_sin_frequency,
+                computeDeformSinStrength = compute_deform_sin_strength,
+                computeYieldThreshold = compute_yield_threshold,
+                computeHardening = compute_hardening,
+                computeMaxDeform = compute_max_deform,
+                computeTwoLevelDamage = compute_two_level_damage,
+                computeCoarseRadius = compute_coarse_radius,
+                computeCoarseWeight = compute_coarse_weight,
+                computeCoarseBoost = compute_coarse_boost,
+                computeCoarseDeformMeters = compute_coarse_deform_meters
+            };
+            config.Validate();
+            return config;
+        }
     }
 
     [Serializable]

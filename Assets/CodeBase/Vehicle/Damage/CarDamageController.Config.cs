@@ -22,6 +22,7 @@ public partial class CarDamageController
         impulseToColor = settings.impulseToColor;
         maxColorStep = settings.maxColorStep;
         impulseToRadius = settings.impulseToRadius;
+        impulseFromSpeedFactor = settings.impulseFromSpeedFactor;
         maxRadiusCells = settings.maxRadiusCells;
         minSpeedForDamageKmh = settings.minSpeedForDamageKmh;
         maxSpeedForDamageKmh = settings.maxSpeedForDamageKmh;
@@ -59,6 +60,77 @@ public partial class CarDamageController
         debugVoxelOpacity = settings.debugVoxelOpacity;
         debugVoxelYOffset = settings.debugVoxelYOffset;
         debugVoxelScale = settings.debugVoxelScale;
+    }
+
+    public CarDamageRuntimeTuning CaptureRuntimeTuning()
+    {
+        CarDamageRuntimeTuning tuning = new CarDamageRuntimeTuning
+        {
+            obstacleTag = obstacleTag,
+            impulseToColor = impulseToColor,
+            maxColorStep = maxColorStep,
+            impulseToRadius = impulseToRadius,
+            impulseFromSpeedFactor = impulseFromSpeedFactor,
+            maxRadiusCells = maxRadiusCells,
+            minSpeedForDamageKmh = minSpeedForDamageKmh,
+            maxSpeedForDamageKmh = maxSpeedForDamageKmh,
+            minDamageScale = minDamageScale,
+            glancingDamageScale = glancingDamageScale,
+            impactAlignmentPower = impactAlignmentPower,
+            speedRadiusBoost = speedRadiusBoost,
+            computeDeformAmplitude = computeDeformAmplitude,
+            computeDeformDirection = computeDeformDirection,
+            computeDeformSinFrequency = computeDeformSinFrequency,
+            computeDeformSinStrength = computeDeformSinStrength,
+            computeYieldThreshold = computeYieldThreshold,
+            computeHardening = computeHardening,
+            computeMaxDeform = computeMaxDeform,
+            computeTwoLevelDamage = computeTwoLevelDamage,
+            computeCoarseRadius = computeCoarseRadius,
+            computeCoarseWeight = computeCoarseWeight,
+            computeCoarseBoost = computeCoarseBoost,
+            computeCoarseDeformMeters = computeCoarseDeformMeters
+        };
+        tuning.Validate();
+        return tuning;
+    }
+
+    public void ApplyRuntimeTuning(CarDamageRuntimeTuning tuning)
+    {
+        if (tuning == null)
+            return;
+
+        tuning.Validate();
+
+        obstacleTag = tuning.obstacleTag;
+        obstacleTagIsValid = string.IsNullOrWhiteSpace(obstacleTag) || IsValidTag(obstacleTag);
+        obstacleTagWarningShown = false;
+        impulseToColor = tuning.impulseToColor;
+        maxColorStep = tuning.maxColorStep;
+        impulseToRadius = tuning.impulseToRadius;
+        impulseFromSpeedFactor = tuning.impulseFromSpeedFactor;
+        maxRadiusCells = tuning.maxRadiusCells;
+        minSpeedForDamageKmh = tuning.minSpeedForDamageKmh;
+        maxSpeedForDamageKmh = tuning.maxSpeedForDamageKmh;
+        minDamageScale = tuning.minDamageScale;
+        glancingDamageScale = tuning.glancingDamageScale;
+        impactAlignmentPower = tuning.impactAlignmentPower;
+        speedRadiusBoost = tuning.speedRadiusBoost;
+        computeDeformAmplitude = tuning.computeDeformAmplitude;
+        computeDeformDirection = tuning.computeDeformDirection;
+        computeDeformSinFrequency = tuning.computeDeformSinFrequency;
+        computeDeformSinStrength = tuning.computeDeformSinStrength;
+        computeYieldThreshold = tuning.computeYieldThreshold;
+        computeHardening = tuning.computeHardening;
+        computeMaxDeform = tuning.computeMaxDeform;
+        computeTwoLevelDamage = tuning.computeTwoLevelDamage;
+        computeCoarseRadius = tuning.computeCoarseRadius;
+        computeCoarseWeight = tuning.computeCoarseWeight;
+        computeCoarseBoost = tuning.computeCoarseBoost;
+        computeCoarseDeformMeters = tuning.computeCoarseDeformMeters;
+
+        if (deformMeshWithCompute && isInitialized)
+            ApplyComputeDeformation();
     }
 
     public void OverrideRuntimeTargets(Renderer runtimeTargetRenderer, Renderer[] runtimeRenderers, Material[] runtimeTargetMaterials)
