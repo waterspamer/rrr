@@ -105,6 +105,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
     {
         public CarDamageController damageController;
         public NetworkVehicleEntity entity;
+        public string playerId;
         public Action<CarDamageNetworkSnapshot> damageHandler;
         public Action<NetworkVehicleCollisionReport> collisionHandler;
     }
@@ -198,15 +199,26 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             NetworkVehicleEntity entity = damageController.GetComponent<NetworkVehicleEntity>();
             if (entity == null)
                 entity = damageController.GetComponentInParent<NetworkVehicleEntity>();
-            if (entity == null || string.IsNullOrWhiteSpace(entity.PlayerId))
+            if (entity == null)
+                continue;
+
+            if (!TryResolvePlayerId(damageController, entity, out string resolvedPlayerId))
                 continue;
 
             int key = damageController.GetInstanceID();
             activeKeys.Add(key);
 
-            if (!serverSubscriptions.ContainsKey(key) || force)
+            bool needsRefresh =
+                !serverSubscriptions.TryGetValue(key, out DamageSubscription existing) ||
+                existing == null ||
+                force ||
+                existing.damageController != damageController ||
+                existing.entity != entity ||
+                !string.Equals(existing.playerId, resolvedPlayerId, StringComparison.Ordinal);
+
+            if (needsRefresh)
             {
-                if (serverSubscriptions.TryGetValue(key, out DamageSubscription existing) && existing?.damageController != null)
+                if (existing?.damageController != null)
                 {
                     existing.damageController.DamageMapChanged -= existing.damageHandler;
                     existing.damageController.NetworkVehicleCollisionDetected -= existing.collisionHandler;
@@ -215,7 +227,8 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
                 DamageSubscription subscription = new DamageSubscription
                 {
                     damageController = damageController,
-                    entity = entity
+                    entity = entity,
+                    playerId = resolvedPlayerId
                 };
                 subscription.damageHandler = snapshot => HandleServerDamageChanged(subscription, snapshot);
                 subscription.collisionHandler = report => HandleServerCollision(subscription, report);
@@ -224,7 +237,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
                 serverSubscriptions[key] = subscription;
             }
 
-            CaptureCurrentSnapshot(entity.PlayerId, damageController);
+            CaptureCurrentSnapshot(resolvedPlayerId, damageController);
         }
 
         List<int> staleKeys = new List<int>();
@@ -261,10 +274,11 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             NetworkVehicleEntity entity = damageController.GetComponent<NetworkVehicleEntity>();
             if (entity == null)
                 entity = damageController.GetComponentInParent<NetworkVehicleEntity>();
-            if (entity == null || string.IsNullOrWhiteSpace(entity.PlayerId))
+            if (entity == null)
                 continue;
 
-            CaptureCurrentSnapshot(entity.PlayerId, damageController);
+            if (TryResolvePlayerId(damageController, entity, out string resolvedPlayerId))
+                CaptureCurrentSnapshot(resolvedPlayerId, damageController);
         }
     }
 
@@ -282,12 +296,12 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 
     private void HandleServerDamageChanged(DamageSubscription subscription, CarDamageNetworkSnapshot snapshot)
     {
-        if (subscription == null || subscription.entity == null || string.IsNullOrWhiteSpace(subscription.entity.PlayerId))
+        if (subscription == null || subscription.entity == null || string.IsNullOrWhiteSpace(subscription.playerId))
             return;
         if (snapshot == null || snapshot.rawBytes == null || snapshot.rawBytes.Length == 0)
             return;
 
-        string playerId = subscription.entity.PlayerId;
+        string playerId = subscription.playerId;
         CarDamageNetworkSnapshot cloned = CloneSnapshot(snapshot);
         latestSnapshotsByPlayer[playerId] = cloned;
         BroadcastDamageSnapshot(playerId, cloned);
@@ -297,10 +311,10 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
     {
         if (playersManager == null || subscription == null || subscription.entity == null || report == null)
             return;
-        if (string.IsNullOrWhiteSpace(subscription.entity.PlayerId) || string.IsNullOrWhiteSpace(report.otherPlayerId))
+        if (string.IsNullOrWhiteSpace(subscription.playerId) || string.IsNullOrWhiteSpace(report.otherPlayerId))
             return;
 
-        string pairKey = BuildCollisionPairKey(subscription.entity.PlayerId, report.otherPlayerId);
+        string pairKey = BuildCollisionPairKey(subscription.playerId, report.otherPlayerId);
         if (recentServerCollisions.TryGetValue(pairKey, out float recentTime) &&
             Time.unscaledTime - recentTime <= ServerCollisionDedupeWindow)
         {
@@ -310,7 +324,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         recentServerCollisions[pairKey] = Time.unscaledTime;
         playersManager.SendToAll(new PurrVehicleCollisionEventMessage
         {
-            primaryPlayerId = subscription.entity.PlayerId,
+            primaryPlayerId = subscription.playerId,
             secondaryPlayerId = report.otherPlayerId,
             worldPoint = report.worldPoint,
             worldNormal = report.worldNormal,
@@ -408,13 +422,15 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         for (int i = 0; i < entities.Length; i++)
         {
             NetworkVehicleEntity entity = entities[i];
-            if (entity == null || !string.Equals(entity.PlayerId, playerId, StringComparison.Ordinal))
+            if (entity == null)
                 continue;
 
             CarDamageController damageController = entity.GetComponent<CarDamageController>();
             if (damageController == null)
                 damageController = entity.GetComponentInParent<CarDamageController>();
             if (damageController == null)
+                continue;
+            if (!MatchesPlayerId(entity, damageController, playerId))
                 continue;
             if (damageController.DamageRevision >= snapshot.revision)
                 continue;
@@ -446,17 +462,67 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             NetworkVehicleEntity entity = entities[i];
             if (entity == null)
                 continue;
-            if (!entity.IsLocalPlayer && !string.Equals(entity.PlayerId, localPlayerId, StringComparison.Ordinal))
-                continue;
 
             damageController = entity.GetComponent<CarDamageController>();
             if (damageController == null)
                 damageController = entity.GetComponentInParent<CarDamageController>();
+            if (damageController == null)
+                continue;
+            if (!entity.IsLocalPlayer && !MatchesPlayerId(entity, damageController, localPlayerId))
+                continue;
             if (damageController != null)
                 return true;
         }
 
         damageController = null;
+        return false;
+    }
+
+    private static bool TryResolvePlayerId(CarDamageController damageController, NetworkVehicleEntity entity, out string playerId)
+    {
+        if (TryResolvePredictedOwnerId(damageController != null ? damageController.transform : entity != null ? entity.transform : null, out playerId))
+            return true;
+
+        if (entity != null && !string.IsNullOrWhiteSpace(entity.PlayerId))
+        {
+            playerId = entity.PlayerId;
+            return true;
+        }
+
+        playerId = null;
+        return false;
+    }
+
+    private static bool MatchesPlayerId(NetworkVehicleEntity entity, CarDamageController damageController, string playerId)
+    {
+        if (string.IsNullOrWhiteSpace(playerId))
+            return false;
+
+        if (entity != null && string.Equals(entity.PlayerId, playerId, StringComparison.Ordinal))
+            return true;
+
+        return TryResolvePredictedOwnerId(
+            damageController != null ? damageController.transform : entity != null ? entity.transform : null,
+            out string resolvedPlayerId) &&
+            string.Equals(resolvedPlayerId, playerId, StringComparison.Ordinal);
+    }
+
+    private static bool TryResolvePredictedOwnerId(Transform source, out string playerId)
+    {
+        playerId = null;
+        Transform current = source;
+        while (current != null)
+        {
+            PurrVehiclePredictedController predictedController = current.GetComponent<PurrVehiclePredictedController>();
+            if (predictedController != null && predictedController.owner.HasValue)
+            {
+                playerId = predictedController.owner.Value.ToString();
+                return !string.IsNullOrWhiteSpace(playerId);
+            }
+
+            current = current.parent;
+        }
+
         return false;
     }
 

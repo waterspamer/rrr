@@ -183,6 +183,15 @@ public sealed class BackendClient
         return socket.DisconnectAsync();
     }
 
+    public void ClearGameplayContext()
+    {
+        CurrentLobby = null;
+        CurrentMatchInfo = null;
+        LatestMatchState = null;
+        LobbyChanged?.Invoke(null);
+        MatchInfoChanged?.Invoke(null);
+    }
+
     public Task SubscribeLobbyAsync(string lobbyId)
     {
         return socket.SendAsync(new BackendSubscribeLobbyMessage

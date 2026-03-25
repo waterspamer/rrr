@@ -2310,6 +2310,16 @@ public class GarageMenuController : MonoBehaviour
     private void StartSinglePlayerGame()
     {
         PurrNetSessionRuntime.Reset();
+        try
+        {
+            if (Backend.Client.IsRealtimeConnected)
+                _ = Backend.Client.DisconnectRealtimeAsync();
+        }
+        catch
+        {
+        }
+
+        Backend.Client.ClearGameplayContext();
         CommitCurrentSelection();
         SceneManager.LoadScene(gameSceneName);
     }

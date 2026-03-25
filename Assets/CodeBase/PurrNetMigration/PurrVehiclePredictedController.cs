@@ -187,18 +187,20 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         if (controller == null)
             return;
 
-        controller.SetManualSimulationEnabled(true);
+        bool usePredictedSimulation = predictionManager != null;
+
+        controller.SetManualSimulationEnabled(usePredictedSimulation);
         controller.SetInputEnabled(true);
         controller.SetPhysicsSimulationEnabled(true);
 
-        if (body != null)
+        if (body != null && usePredictedSimulation)
             body.interpolation = RigidbodyInterpolation.None;
     }
 
     private void ConfigureAuthorityState()
     {
         if (damageController != null)
-            damageController.SetCollisionDamageEnabled(isServer);
+            damageController.SetCollisionDamageEnabled(predictionManager == null || isServer);
     }
 
     private void RefreshViewBindings()
