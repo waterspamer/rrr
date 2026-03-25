@@ -147,6 +147,28 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             if (segments.Length == 3 &&
                 string.Equals(segments[0], "api", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(segments[2], "damage-config", StringComparison.OrdinalIgnoreCase))
+            {
+                if (method == "GET")
+                {
+                    ObserverDamageConfigState payload = await RunOnMainThreadAsync(BuildDamageConfigResponse);
+                    await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
+                    return;
+                }
+
+                if (method == "PUT")
+                {
+                    string requestBody = await ReadRequestBodyAsync(context.Request);
+                    ObserverDamageConfigState requestPayload = ParseRequestBody<ObserverDamageConfigState>(requestBody);
+                    ObserverDamageConfigState payload = await RunOnMainThreadAsync(() => UpdateDamageConfig(requestPayload));
+                    await WriteJsonAsync(context.Response, 200, JsonUtility.ToJson(payload));
+                    return;
+                }
+            }
+
+            if (segments.Length == 3 &&
+                string.Equals(segments[0], "api", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(segments[2], "rooms", StringComparison.OrdinalIgnoreCase) &&
                 method == "GET")
             {
