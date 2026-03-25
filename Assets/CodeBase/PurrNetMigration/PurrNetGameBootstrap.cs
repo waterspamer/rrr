@@ -242,49 +242,6 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         }
     }
 
-    private static Transform ResolveGraphicsRoot(Transform root)
-    {
-        if (root == null)
-            return null;
-
-        Transform body = root.Find("Body");
-        if (body != null)
-        {
-            Transform bodyRoot = body.Find("Root");
-            if (IsValidGraphicsRoot(bodyRoot))
-                return bodyRoot;
-
-            if (IsValidGraphicsRoot(body))
-                return body;
-        }
-
-        Transform[] all = root.GetComponentsInChildren<Transform>(true);
-        for (int i = 0; i < all.Length; i++)
-        {
-            if (all[i] != null && IsValidGraphicsRoot(all[i]))
-                return all[i];
-        }
-
-        return null;
-    }
-
-    private static bool IsValidGraphicsRoot(Transform candidate)
-    {
-        if (candidate == null)
-            return false;
-
-        if (candidate.GetComponentInChildren<Collider>(true) != null)
-            return false;
-
-        if (candidate.GetComponentInChildren<Rigidbody>(true) != null)
-            return false;
-
-        if (candidate.GetComponentInChildren<PredictedIdentity>(true) != null)
-            return false;
-
-        return candidate.GetComponentInChildren<Renderer>(true) != null;
-    }
-
     private PlayerCar CreateRuntimeVehiclePrefab()
     {
         if (templateCar == null)
@@ -323,9 +280,18 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
 
         SafePredictedTransform predictedTransform = GetOrAddComponent<SafePredictedTransform>(runtimeTemplateObject);
         PredictedRigidbody predictedRigidbody = GetOrAddComponent<PredictedRigidbody>(runtimeTemplateObject);
-        SetPrivateField(predictedTransform, "_graphics", ResolveGraphicsRoot(runtimeTemplateCar.transform));
+        SetPrivateField(predictedTransform, "_graphics", PurrVehicleGraphicsBindingUtility.ResolveGraphicsRoot(runtimeTemplateCar.transform));
+        SetPrivateField(predictedTransform, "_interpolationSettings", CreateRuntimeInterpolationSettings());
         SetPrivateField(predictedRigidbody, "_rigidbody", runtimeBody);
         SetPrivateField(predictedRigidbody, "_eventMask", PhysicsEventMask.None);
+    }
+
+    private static TransformInterpolationSettings CreateRuntimeInterpolationSettings()
+    {
+        TransformInterpolationSettings settings = ScriptableObject.CreateInstance<TransformInterpolationSettings>();
+        settings.hideFlags = HideFlags.HideAndDontSave;
+        settings.name = "PurrVehicleRuntimeInterpolation";
+        return settings;
     }
 
     private static NetworkPrefabs CreateNetworkPrefabs(GameObject templatePrefab)
@@ -559,6 +525,75 @@ public sealed class SafePredictedTransform : PredictedTransform
             return;
 
         targetGraphics.SetPositionAndRotation(viewState.unityPosition, viewState.unityRotation);
+    }
+}
+
+public static class PurrVehicleGraphicsBindingUtility
+{
+    private static readonly FieldInfo GraphicsField =
+        typeof(PredictedTransform).GetField("_graphics", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    public static Transform RefreshGraphicsBinding(Component component, SafePredictedTransform predictedTransform)
+    {
+        if (component == null)
+            return null;
+
+        return RefreshGraphicsBinding(component.transform, predictedTransform);
+    }
+
+    public static Transform RefreshGraphicsBinding(Transform root, SafePredictedTransform predictedTransform)
+    {
+        if (root == null || predictedTransform == null)
+            return null;
+
+        Transform graphicsRoot = ResolveGraphicsRoot(root);
+        if (GraphicsField != null)
+            GraphicsField.SetValue(predictedTransform, graphicsRoot);
+
+        return graphicsRoot;
+    }
+
+    public static Transform ResolveGraphicsRoot(Transform root)
+    {
+        if (root == null)
+            return null;
+
+        Transform body = root.Find("Body");
+        if (body != null)
+        {
+            Transform bodyRoot = body.Find("Root");
+            if (IsValidGraphicsRoot(bodyRoot))
+                return bodyRoot;
+
+            if (IsValidGraphicsRoot(body))
+                return body;
+        }
+
+        Transform[] all = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] != null && IsValidGraphicsRoot(all[i]))
+                return all[i];
+        }
+
+        return null;
+    }
+
+    private static bool IsValidGraphicsRoot(Transform candidate)
+    {
+        if (candidate == null)
+            return false;
+
+        if (candidate.GetComponentInChildren<Collider>(true) != null)
+            return false;
+
+        if (candidate.GetComponentInChildren<Rigidbody>(true) != null)
+            return false;
+
+        if (candidate.GetComponentInChildren<PredictedIdentity>(true) != null)
+            return false;
+
+        return candidate.GetComponentInChildren<Renderer>(true) != null;
     }
 }
 

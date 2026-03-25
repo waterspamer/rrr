@@ -6,6 +6,7 @@ using UnityEngine;
 public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayerIdentity>
 {
     [SerializeField] private PlayerCar playerCar;
+    [SerializeField] private SafePredictedTransform predictedTransform;
     [SerializeField] private FollowCarCamera followCamera;
     [SerializeField] private string graphicsRootName = "Body";
     [SerializeField] private SyncVar<string> loadoutJson = new SyncVar<string>(string.Empty, ownerAuth: true);
@@ -72,7 +73,10 @@ public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayer
         {
             PlayerCarSelectionPayload payload = JsonUtility.FromJson<PlayerCarSelectionPayload>(json);
             if (payload != null)
+            {
                 PlayerCarLoadoutUtility.ApplySelectedLoadout(playerCar, payload);
+                RefreshPredictionView();
+            }
         }
         catch (System.Exception ex)
         {
@@ -104,17 +108,10 @@ public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayer
         if (payload == null)
             return null;
 
-        return new PlayerCarSelectionPayload
-        {
-            version = payload.version,
-            loadoutName = payload.loadoutName,
-            bodySetOptionIndex = payload.bodySetOptionIndex,
-            engineIndex = payload.engineIndex,
-            suspensionIndex = payload.suspensionIndex,
-            paintIndex = payload.paintIndex,
-            hasPaint = payload.hasPaint,
-            paint = payload.paint
-        };
+        string serialized = JsonUtility.ToJson(payload);
+        return string.IsNullOrWhiteSpace(serialized)
+            ? null
+            : JsonUtility.FromJson<PlayerCarSelectionPayload>(serialized);
     }
 
     private void ApplyLocalViewBindings()
@@ -128,7 +125,7 @@ public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayer
         if (followCamera == null)
             return;
 
-        Transform target = playerCar != null ? playerCar.transform : transform;
+        Transform target = ResolveGraphicsTarget();
 
         if (target != null)
             followCamera.SetTarget(target);
@@ -153,6 +150,13 @@ public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayer
 
     private Transform ResolveGraphicsTarget()
     {
+        Transform graphicsTarget = RefreshPredictionView();
+        if (graphicsTarget != null)
+            return graphicsTarget;
+
+        if (predictedTransform != null && predictedTransform.graphics != null)
+            return predictedTransform.graphics;
+
         if (string.IsNullOrWhiteSpace(graphicsRootName))
             return playerCar != null ? playerCar.transform : transform;
 
@@ -170,7 +174,17 @@ public sealed class PurrVehiclePlayerIdentity : PlayerIdentity<PurrVehiclePlayer
     {
         if (playerCar == null)
             playerCar = GetComponent<PlayerCar>();
+        if (predictedTransform == null)
+            predictedTransform = GetComponent<SafePredictedTransform>();
         if (followCamera == null)
             followCamera = FindFirstObjectByType<FollowCarCamera>();
+    }
+
+    private Transform RefreshPredictionView()
+    {
+        if (predictedTransform == null)
+            return null;
+
+        return PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
     }
 }

@@ -20,7 +20,10 @@ public static class DedicatedServerBuildPipeline
     private const string DefaultPurrNetBindAddress = "0.0.0.0";
     private const string DefaultPurrNetPort = "5000";
     private const string DefaultPurrNetTickRate = "30";
-    private const string DefaultPurrNetSoloBots = "0";
+    private const string DefaultPurrNetSoloBots = "1";
+    private const string DefaultPurrNetAutoCloseSoloSession = "1";
+    private const string DefaultPurrNetSoloIdleTimeoutSec = "30";
+    private const string DefaultPurrNetSoloIdlePollSec = "0.5";
     private static readonly string[] DefaultDedicatedScenes = { "Assets/Scenes/Game.unity" };
     private static readonly string[] RequiredTags = { "Obstacle", "Weapon" };
 
@@ -217,6 +220,9 @@ public static class DedicatedServerBuildPipeline
                         $"RRR_PURRNET_PORT=\"${{RRR_PURRNET_PORT:-{DefaultPurrNetPort}}}\"\n" +
                         $"RRR_PURRNET_TICK_RATE=\"${{RRR_PURRNET_TICK_RATE:-{DefaultPurrNetTickRate}}}\"\n" +
                         $"RRR_PURRNET_SOLO_BOTS=\"${{RRR_PURRNET_SOLO_BOTS:-{DefaultPurrNetSoloBots}}}\"\n" +
+                        $"RRR_PURRNET_AUTO_CLOSE_SOLO_SESSION=\"${{RRR_PURRNET_AUTO_CLOSE_SOLO_SESSION:-{DefaultPurrNetAutoCloseSoloSession}}}\"\n" +
+                        $"RRR_PURRNET_SOLO_IDLE_TIMEOUT_SEC=\"${{RRR_PURRNET_SOLO_IDLE_TIMEOUT_SEC:-{DefaultPurrNetSoloIdleTimeoutSec}}}\"\n" +
+                        $"RRR_PURRNET_SOLO_IDLE_POLL_SEC=\"${{RRR_PURRNET_SOLO_IDLE_POLL_SEC:-{DefaultPurrNetSoloIdlePollSec}}}\"\n" +
                         $"exec \"$SCRIPT_DIR/{executableName}\" -batchmode -nographics -rrrNetMode server -rrrNetAddress \"$RRR_PURRNET_ADDRESS\" -rrrNetPort \"$RRR_PURRNET_PORT\" -rrrNetTickRate \"$RRR_PURRNET_TICK_RATE\" -rrrNetSoloBots \"$RRR_PURRNET_SOLO_BOTS\" \"$@\"\n";
         File.WriteAllText(scriptPath, script);
 
@@ -237,10 +243,15 @@ public static class DedicatedServerBuildPipeline
         string template = "RRR_PURRNET_ADDRESS=0.0.0.0\n" +
                           "RRR_PURRNET_PORT=5000\n" +
                           "RRR_PURRNET_TICK_RATE=30\n" +
-                          "RRR_PURRNET_SOLO_BOTS=0\n" +
+                          "RRR_PURRNET_SOLO_BOTS=1\n" +
+                          "RRR_PURRNET_AUTO_CLOSE_SOLO_SESSION=1\n" +
+                          "RRR_PURRNET_SOLO_IDLE_TIMEOUT_SEC=30\n" +
+                          "RRR_PURRNET_SOLO_IDLE_POLL_SEC=0.5\n" +
+                          "RRR_PURRNET_MATCH_ID=purrnet-live\n" +
+                          "RRR_PURRNET_MAP_ID=city_default\n" +
                           "\n" +
                           "RRR_MATCH_BACKEND_URL=http://127.0.0.1:8083\n" +
-                          "RRR_DEDICATED_BIND=127.0.0.1\n" +
+                          "RRR_DEDICATED_BIND=0.0.0.0\n" +
                           "RRR_DEDICATED_PORT=7777\n" +
                           "RRR_DEDICATED_LOG_LEVEL=info\n" +
                           "RRR_DEDICATED_CONTROL_TOKEN=\n" +

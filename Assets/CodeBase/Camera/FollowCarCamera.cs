@@ -573,10 +573,19 @@ public class FollowCarCamera : MonoBehaviour
 
         float speedKph = 0.0f;
         CarControllerBase car = target.GetComponent<CarControllerBase>();
+        if (car == null)
+            car = target.GetComponentInParent<CarControllerBase>();
         if (car != null)
+        {
             speedKph = car.SpeedKph;
+        }
         else
-            speedKph = target.GetComponent<Rigidbody>() != null ? target.GetComponent<Rigidbody>().linearVelocity.magnitude * 3.6f : 0.0f;
+        {
+            Rigidbody targetBody = target.GetComponent<Rigidbody>();
+            if (targetBody == null)
+                targetBody = target.GetComponentInParent<Rigidbody>();
+            speedKph = targetBody != null ? targetBody.linearVelocity.magnitude * 3.6f : 0.0f;
+        }
 
         float t = speedForMaxFov > 1.0f ? Mathf.Clamp01(speedKph / speedForMaxFov) : 0.0f;
         float desired = Mathf.Lerp(baseFov, maxFov, t);

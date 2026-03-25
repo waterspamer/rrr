@@ -10,6 +10,7 @@ using UnityEngine;
 public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehiclePredictedInput, PurrVehiclePredictedControllerState>
 {
     [SerializeField] private PlayerCar playerCar;
+    [SerializeField] private SafePredictedTransform predictedTransform;
     [SerializeField] private CarControllerBase controller;
     [SerializeField] private Rigidbody body;
     [SerializeField] private CarDamageController damageController;
@@ -162,6 +163,8 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
     {
         if (playerCar == null)
             playerCar = GetComponent<PlayerCar>();
+        if (predictedTransform == null)
+            predictedTransform = GetComponent<SafePredictedTransform>();
         if (controller == null && playerCar != null)
             controller = playerCar.Controller;
         if (controller == null)
@@ -200,6 +203,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
     private void RefreshViewBindings()
     {
         ResolveReferences();
+        RefreshPredictionView();
 
         NetworkVehicleEntity entity = playerCar != null ? playerCar.GetComponent<NetworkVehicleEntity>() : null;
         if (playerCar != null && entity == null)
@@ -215,7 +219,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
 
         FollowCarCamera followCamera = FindFirstObjectByType<FollowCarCamera>();
         if (followCamera != null)
-            followCamera.SetTarget(playerCar.transform);
+            followCamera.SetTarget(ResolveCameraTarget());
     }
 
     private void TryApplyLocalOwnedLoadout()
@@ -228,6 +232,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
             return;
 
         PlayerCarLoadoutUtility.ApplySelectedLoadout(playerCar, payload);
+        RefreshPredictionView();
         lastAppliedLocalLoadoutSignature = signature;
         Debug.Log($"PurrVehiclePredictedController: applied local owner loadout '{payload.loadoutName}'.", this);
     }
@@ -238,5 +243,25 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
             return string.Empty;
 
         return $"{payload.loadoutName}|{payload.bodySetOptionIndex}|{payload.engineIndex}|{payload.suspensionIndex}|{payload.paintIndex}";
+    }
+
+    private Transform ResolveCameraTarget()
+    {
+        Transform graphicsTarget = RefreshPredictionView();
+        if (graphicsTarget != null)
+            return graphicsTarget;
+
+        if (predictedTransform != null && predictedTransform.graphics != null)
+            return predictedTransform.graphics;
+
+        return playerCar != null ? playerCar.transform : transform;
+    }
+
+    private Transform RefreshPredictionView()
+    {
+        if (predictedTransform == null)
+            return null;
+
+        return PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
     }
 }

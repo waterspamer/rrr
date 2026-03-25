@@ -62,7 +62,7 @@ public static class PurrNetSessionRuntime
         Configure(new PurrNetSessionSettings(PurrNetSessionMode.Client, address, port, tickRate, 0));
     }
 
-    public static void ConfigureServer(string address = "0.0.0.0", ushort port = 5000, int tickRate = 30, int soloBotCount = 0)
+    public static void ConfigureServer(string address = "0.0.0.0", ushort port = 5000, int tickRate = 30, int soloBotCount = 1)
     {
         Configure(new PurrNetSessionSettings(PurrNetSessionMode.Server, address, port, tickRate, soloBotCount));
     }
@@ -94,7 +94,7 @@ public static class PurrNetSessionRuntime
         string address = "127.0.0.1";
         ushort port = 5000;
         int tickRate = 30;
-        int soloBotCount = 0;
+        int soloBotCount = 1;
 
         if (TryGetArgValue(args, "-rrrNetMode", out string modeValue))
             mode = ParseMode(modeValue);
