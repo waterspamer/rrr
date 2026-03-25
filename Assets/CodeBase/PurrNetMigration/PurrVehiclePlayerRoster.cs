@@ -19,6 +19,7 @@ public sealed class PurrPlayerProfileData
     public string platform;
     public bool isBot;
     public long updatedAtUnixMs;
+    public PurrPlayerDataBag publicData;
 
     public string DisplayName => string.IsNullOrWhiteSpace(playerName) ? networkPlayerId : playerName;
 
@@ -35,7 +36,8 @@ public sealed class PurrPlayerProfileData
             sessionId = sessionId,
             platform = platform,
             isBot = isBot,
-            updatedAtUnixMs = updatedAtUnixMs
+            updatedAtUnixMs = updatedAtUnixMs,
+            publicData = publicData != null ? publicData.Clone() : null
         };
     }
 }
@@ -440,10 +442,18 @@ public static class PurrLocalPlayerProfile
     public static PurrPlayerProfileData BuildCurrentProfile(string preferredPrefix = null)
     {
         BackendSessionResponse session = Backend.Client.Session;
+        BackendPlayerProfile backendProfile = Backend.Client.CurrentPlayerProfile != null
+            ? Backend.Client.CurrentPlayerProfile
+            : session != null
+                ? session.player_profile
+                : null;
+        PlayerCarSelection.TryGetPayload(out PlayerCarSelectionPayload activeLoadout);
         if (session != null)
         {
-            string resolvedPlayerName = !string.IsNullOrWhiteSpace(session.player_name)
-                ? session.player_name.Trim()
+            string resolvedPlayerName = !string.IsNullOrWhiteSpace(backendProfile != null ? backendProfile.display_name : null)
+                ? backendProfile.display_name.Trim()
+                : !string.IsNullOrWhiteSpace(session.player_name)
+                    ? session.player_name.Trim()
                 : ResolveStoredPlayerName(preferredPrefix);
             PersistPlayerName(resolvedPlayerName);
 
@@ -455,19 +465,25 @@ public static class PurrLocalPlayerProfile
                 authState = "guest_session",
                 sessionId = session.session_id,
                 platform = Application.platform.ToString(),
-                updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                publicData = backendProfile != null
+                    ? PurrPlayerPublicDataFactory.BuildFromBackendProfile(backendProfile, activeLoadout)
+                    : PurrPlayerPublicDataFactory.BuildFallback(session.player_id, resolvedPlayerName, activeLoadout)
             };
         }
 
+        string accountId = ResolveStoredAccountId();
+        string playerName = ResolveStoredPlayerName(preferredPrefix);
         return new PurrPlayerProfileData
         {
-            accountPlayerId = ResolveStoredAccountId(),
-            playerName = ResolveStoredPlayerName(preferredPrefix),
+            accountPlayerId = accountId,
+            playerName = playerName,
             authProvider = "local_placeholder",
             authState = "guest_placeholder",
             sessionId = string.Empty,
             platform = Application.platform.ToString(),
-            updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            updatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            publicData = PurrPlayerPublicDataFactory.BuildFallback(accountId, playerName, activeLoadout)
         };
     }
 

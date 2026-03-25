@@ -26,6 +26,85 @@ public sealed class BackendSessionResponse
     public string session_token;
     public string created_at;
     public string expires_at;
+    public BackendPlayerProfile player_profile;
+}
+
+[Serializable]
+public sealed class BackendPlayerBalance
+{
+    public int soft;
+    public int premium;
+}
+
+[Serializable]
+public sealed class BackendPlayerProgression
+{
+    public int level;
+    public int experience;
+}
+
+[Serializable]
+public sealed class BackendPlayerGarageCar
+{
+    public string car_id;
+    public string display_name;
+    public string acquired_at;
+    public string acquisition_source;
+    public bool favorite;
+    public List<string> tuning_preset_ids = new List<string>();
+    public List<string> tags = new List<string>();
+}
+
+[Serializable]
+public sealed class BackendPlayerGarage
+{
+    public string selected_car_id;
+    public string selected_car_display_name;
+    public int owned_car_count;
+    public List<BackendPlayerGarageCar> owned_cars = new List<BackendPlayerGarageCar>();
+}
+
+[Serializable]
+public sealed class BackendMetadataEntry
+{
+    public string key;
+    public string value;
+}
+
+[Serializable]
+public class BackendPlayerPublicProfile
+{
+    public string player_id;
+    public string account_id;
+    public string display_name;
+    public bool is_guest;
+    public BackendPlayerBalance balance;
+    public BackendPlayerProgression progression;
+    public BackendPlayerGarage garage;
+    public List<BackendMetadataEntry> public_flags = new List<BackendMetadataEntry>();
+}
+
+[Serializable]
+public sealed class BackendPlayerProfile : BackendPlayerPublicProfile
+{
+    public string created_at;
+    public string updated_at;
+    public List<BackendMetadataEntry> private_data = new List<BackendMetadataEntry>();
+}
+
+[Serializable]
+public sealed class BackendPlayerProfileUpdateRequest
+{
+    public string display_name;
+    public int balance_soft;
+    public int balance_premium;
+    public int level;
+    public int experience;
+    public string selected_car_id;
+    public string selected_car_display_name;
+    public List<BackendPlayerGarageCar> owned_cars = new List<BackendPlayerGarageCar>();
+    public List<BackendMetadataEntry> public_flags = new List<BackendMetadataEntry>();
+    public List<BackendMetadataEntry> private_data = new List<BackendMetadataEntry>();
 }
 
 [Serializable]
@@ -70,6 +149,7 @@ public sealed class BackendLobbyPlayer
     public bool is_server_controlled;
     public string joined_at;
     public BackendCarConfigPayload car_config;
+    public BackendPlayerPublicProfile player_profile;
 }
 
 [Serializable]
@@ -391,6 +471,7 @@ public sealed class BackendMatchPlayerInfo
     public BackendVector3 spawn_position;
     public BackendVector3 spawn_rotation;
     public BackendCarConfigPayload car_config;
+    public BackendPlayerPublicProfile player_profile;
 
     public Vector3 SpawnPositionVector => spawn_position != null ? spawn_position.ToVector3() : Vector3.zero;
     public Vector3 SpawnRotationVector => spawn_rotation != null ? spawn_rotation.ToVector3() : Vector3.zero;

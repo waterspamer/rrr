@@ -11,6 +11,7 @@ public sealed class NetworkVehicleEntity : MonoBehaviour
     [SerializeField] private string sessionId;
     [SerializeField] private bool isBot;
     [SerializeField] private bool isLocalPlayer;
+    [SerializeField] private PurrPlayerDataBag replicatedPublicData = new PurrPlayerDataBag();
     [SerializeField] private PurrPlayerStatsData replicatedStats = new PurrPlayerStatsData();
 
     public string PlayerId => playerId;
@@ -47,7 +48,8 @@ public sealed class NetworkVehicleEntity : MonoBehaviour
             !string.Equals(authProvider, profile.authProvider, System.StringComparison.Ordinal) ||
             !string.Equals(authState, profile.authState, System.StringComparison.Ordinal) ||
             !string.Equals(sessionId, profile.sessionId, System.StringComparison.Ordinal) ||
-            isBot != profile.isBot;
+            isBot != profile.isBot ||
+            !string.Equals(SerializePublicData(replicatedPublicData), SerializePublicData(profile.publicData), System.StringComparison.Ordinal);
 
         if (!string.IsNullOrWhiteSpace(profile.networkPlayerId))
             playerId = profile.networkPlayerId;
@@ -57,6 +59,7 @@ public sealed class NetworkVehicleEntity : MonoBehaviour
         authState = profile.authState;
         sessionId = profile.sessionId;
         isBot = profile.isBot;
+        replicatedPublicData = profile.publicData != null ? profile.publicData.Clone() : new PurrPlayerDataBag();
 
         if (changed)
             IdentityChanged?.Invoke(this);
@@ -103,5 +106,37 @@ public sealed class NetworkVehicleEntity : MonoBehaviour
 
         healthNormalized = Mathf.Clamp01(currentHealth / maxHealth);
         return true;
+    }
+
+    public bool TryGetPublicDataSectionJson(string sectionId, out string payloadJson)
+    {
+        payloadJson = string.Empty;
+        return replicatedPublicData != null && replicatedPublicData.TryGetSectionJson(sectionId, out payloadJson);
+    }
+
+    public bool TryGetGaragePublicSummary(out PurrPlayerGaragePublicSummary summary)
+    {
+        summary = null;
+        if (!TryGetPublicDataSectionJson(PurrPlayerPublicDataFactory.GarageSummarySectionId, out string payloadJson) ||
+            string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            summary = JsonUtility.FromJson<PurrPlayerGaragePublicSummary>(payloadJson);
+            return summary != null;
+        }
+        catch
+        {
+            summary = null;
+            return false;
+        }
+    }
+
+    private static string SerializePublicData(PurrPlayerDataBag data)
+    {
+        return data != null ? JsonUtility.ToJson(data) : string.Empty;
     }
 }

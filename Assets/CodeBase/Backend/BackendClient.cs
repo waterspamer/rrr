@@ -10,11 +10,13 @@ public sealed class BackendClient
     private readonly BackendWebSocketClient socket;
 
     public BackendSessionResponse Session { get; private set; }
+    public BackendPlayerProfile CurrentPlayerProfile { get; private set; }
     public BackendLobbyDetails CurrentLobby { get; private set; }
     public BackendMatchInfo CurrentMatchInfo { get; private set; }
     public BackendMatchStateMessage LatestMatchState { get; private set; }
 
     public event Action<BackendSessionResponse> SessionChanged;
+    public event Action<BackendPlayerProfile> PlayerProfileChanged;
     public event Action<BackendLobbyDetails> LobbyChanged;
     public event Action<BackendMatchInfo> MatchInfoChanged;
     public event Action<BackendMatchStateMessage> MatchStateReceived;
@@ -50,8 +52,18 @@ public sealed class BackendClient
         };
 
         Session = await http.PostAsync<BackendGuestSessionRequest, BackendSessionResponse>("sessions/guest", request);
+        CurrentPlayerProfile = Session != null ? Session.player_profile : null;
         SessionChanged?.Invoke(Session);
+        PlayerProfileChanged?.Invoke(CurrentPlayerProfile);
         return Session;
+    }
+
+    public async Task<BackendPlayerProfile> GetPlayerProfileAsync()
+    {
+        EnsureSession();
+        CurrentPlayerProfile = await http.GetAsync<BackendPlayerProfile>("players/me", SessionToken);
+        PlayerProfileChanged?.Invoke(CurrentPlayerProfile);
+        return CurrentPlayerProfile;
     }
 
     public Task<BackendLobbiesResponse> GetLobbiesAsync(string status = null, string mapId = null, int page = 1, int pageSize = 50)
@@ -266,6 +278,7 @@ public sealed class BackendClient
             case "lobby_snapshot":
                 BackendLobbySnapshotMessage snapshot = JsonUtility.FromJson<BackendLobbySnapshotMessage>(json);
                 CurrentLobby = snapshot.lobby;
+                TryUpdateCurrentPlayerProfileFromLobby(CurrentLobby);
                 UpdateCurrentMatchFromLobby(CurrentLobby);
                 LobbyChanged?.Invoke(CurrentLobby);
                 break;
@@ -291,6 +304,7 @@ public sealed class BackendClient
                 };
                 if (CurrentLobby != null && string.Equals(CurrentLobby.lobby_id, created.lobby_id, StringComparison.OrdinalIgnoreCase))
                     CurrentLobby.match_id = created.match_id;
+                TryUpdateCurrentPlayerProfileFromMatch(CurrentMatchInfo);
                 MatchInfoChanged?.Invoke(CurrentMatchInfo);
                 break;
             case "lobby_closed":
@@ -519,11 +533,67 @@ public sealed class BackendClient
                 player_name = player.player_name,
                 connection_state = player.connection_state,
                 is_server_controlled = player.is_server_controlled,
-                car_config = player.car_config
+                car_config = player.car_config,
+                player_profile = player.player_profile
             });
         }
 
         return converted;
+    }
+
+    private void TryUpdateCurrentPlayerProfileFromLobby(BackendLobbyDetails lobby)
+    {
+        if (Session == null || lobby == null || lobby.players == null)
+            return;
+
+        for (int i = 0; i < lobby.players.Count; i++)
+        {
+            BackendLobbyPlayer player = lobby.players[i];
+            if (player == null || player.player_profile == null)
+                continue;
+            if (!string.Equals(player.player_id, Session.player_id, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            CurrentPlayerProfile = ConvertPublicProfile(player.player_profile, CurrentPlayerProfile);
+            PlayerProfileChanged?.Invoke(CurrentPlayerProfile);
+            return;
+        }
+    }
+
+    private void TryUpdateCurrentPlayerProfileFromMatch(BackendMatchInfo matchInfo)
+    {
+        if (Session == null || matchInfo == null || matchInfo.players == null)
+            return;
+
+        for (int i = 0; i < matchInfo.players.Count; i++)
+        {
+            BackendMatchPlayerInfo player = matchInfo.players[i];
+            if (player == null || player.player_profile == null)
+                continue;
+            if (!string.Equals(player.player_id, Session.player_id, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            CurrentPlayerProfile = ConvertPublicProfile(player.player_profile, CurrentPlayerProfile);
+            PlayerProfileChanged?.Invoke(CurrentPlayerProfile);
+            return;
+        }
+    }
+
+    private static BackendPlayerProfile ConvertPublicProfile(BackendPlayerPublicProfile source, BackendPlayerProfile existing)
+    {
+        if (source == null)
+            return existing;
+
+        BackendPlayerProfile target = existing ?? new BackendPlayerProfile();
+        target.player_id = source.player_id;
+        target.account_id = source.account_id;
+        target.display_name = source.display_name;
+        target.is_guest = source.is_guest;
+        target.balance = source.balance;
+        target.progression = source.progression;
+        target.garage = source.garage;
+        target.public_flags = source.public_flags != null ? new List<BackendMetadataEntry>(source.public_flags) : new List<BackendMetadataEntry>();
+        return target;
     }
 
     private static string ResolveMatchStatusFromLobby(string lobbyStatus)
