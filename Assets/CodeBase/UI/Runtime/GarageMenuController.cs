@@ -2054,6 +2054,7 @@ public class GarageMenuController : MonoBehaviour
 
         try
         {
+            PurrLocalPlayerProfile.BuildCurrentProfile(BuildGuestPlayerName());
             CommitCurrentSelection();
 
             try
@@ -2158,6 +2159,8 @@ public class GarageMenuController : MonoBehaviour
             string playerName = BuildGuestPlayerName();
             await Backend.Client.CreateGuestSessionAsync(playerName);
         }
+
+        PurrLocalPlayerProfile.BuildCurrentProfile(BuildGuestPlayerName());
 
         if (!Backend.Client.IsRealtimeConnected)
             await Backend.Client.ConnectRealtimeAsync();
@@ -2269,9 +2272,9 @@ public class GarageMenuController : MonoBehaviour
     {
         CarLoadoutConfig loadout = SelectedLoadout;
         string prefix = loadout != null && !string.IsNullOrWhiteSpace(loadout.DisplayName)
-            ? loadout.DisplayName.Replace(" ", string.Empty)
+            ? loadout.DisplayName
             : "Guest";
-        return string.Format("{0}_{1}", prefix, UnityEngine.Random.Range(1000, 9999));
+        return PurrLocalPlayerProfile.ResolvePreferredPlayerName(prefix);
     }
 
     private PlayerCarSelectionPayload CommitCurrentSelection()

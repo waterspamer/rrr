@@ -309,6 +309,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         Rigidbody body = playerContext.body;
         CarControllerBase controller = playerContext.controller;
         PurrVehicleSpawnerPlayerObserverRecord tracked = playerContext.tracked;
+        PurrPlayerProfileData profile = playerContext.profile;
         PlayerCarSelectionPayload loadout = tracked != null ? tracked.loadout : null;
         bool isBot = tracked != null && tracked.isBot;
         string playerId = !string.IsNullOrWhiteSpace(playerContext.playerId)
@@ -316,6 +317,11 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             : tracked != null && !string.IsNullOrWhiteSpace(tracked.playerId)
                 ? tracked.playerId
                 : $"player_{index}";
+        string playerName = profile != null && !string.IsNullOrWhiteSpace(profile.playerName)
+            ? profile.playerName
+            : isBot
+                ? $"Bot {playerId}"
+                : playerId;
         BackendVector3 currentPosition = BackendVector3.FromVector3(playerCar.transform.position);
         BackendVector3 currentRotation = BackendVector3.FromVector3(playerCar.transform.eulerAngles);
         BackendVector3 spawnPosition = tracked != null ? BackendVector3.FromVector3(tracked.spawnPosition) : currentPosition;
@@ -324,7 +330,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         return new ObserverPlayerState
         {
             player_id = playerId,
-            player_name = isBot ? $"Bot {playerId}" : playerId,
+            player_name = playerName,
             connection_state = tracked != null && tracked.queued && !tracked.spawned ? "queued" : "in_game",
             is_server_controlled = isBot,
             authority_order = tracked != null && tracked.spawnSlot >= 0 ? tracked.spawnSlot : index,
@@ -528,6 +534,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         UDPTransport transport = FindFirstObjectByType<UDPTransport>(FindObjectsInactive.Include);
         PredictionManager predictionManager = FindFirstObjectByType<PredictionManager>(FindObjectsInactive.Include);
         PurrVehicleSceneSpawner spawner = FindFirstObjectByType<PurrVehicleSceneSpawner>(FindObjectsInactive.Include);
+        PurrVehiclePlayerRoster roster = FindFirstObjectByType<PurrVehiclePlayerRoster>(FindObjectsInactive.Include);
         PurrVehicleSpawnerObserverSnapshot spawnerState = spawner != null ? spawner.CaptureObserverState() : null;
 
         ObserverSnapshotContext context = new ObserverSnapshotContext
@@ -575,6 +582,9 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             NetworkVehicleEntity entity = predicted.GetComponent<NetworkVehicleEntity>();
             string playerId = entity != null ? entity.PlayerId : string.Empty;
             trackedById.TryGetValue(playerId, out PurrVehicleSpawnerPlayerObserverRecord tracked);
+            PurrPlayerProfileData profile = null;
+            if (roster != null && !string.IsNullOrWhiteSpace(playerId))
+                roster.TryGetProfile(playerId, out profile);
 
             CarDamageController damageController = playerCar.DamageController;
             Rigidbody body = predicted.GetComponent<Rigidbody>();
@@ -590,7 +600,8 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
                 controller = playerCar.Controller != null ? playerCar.Controller : predicted.GetComponent<CarControllerBase>(),
                 damageController = damageController,
                 body = body,
-                tracked = tracked
+                tracked = tracked,
+                profile = profile
             });
         }
 
@@ -828,6 +839,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public CarDamageController damageController;
         public Rigidbody body;
         public PurrVehicleSpawnerPlayerObserverRecord tracked;
+        public PurrPlayerProfileData profile;
     }
 
     private sealed class ObserverSnapshotContext

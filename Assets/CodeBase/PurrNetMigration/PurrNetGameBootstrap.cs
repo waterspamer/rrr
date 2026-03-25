@@ -189,6 +189,7 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
 
         PurrVehicleSceneSpawner spawner = GetOrAddComponent<PurrVehicleSceneSpawner>(predictionManager.gameObject);
         spawner.Configure(runtimeTemplateCar, settings.SoloBotCount, predictionManager);
+        GetOrAddComponent<PurrVehiclePlayerRoster>(predictionManager.gameObject);
 
         switch (settings.Mode)
         {
