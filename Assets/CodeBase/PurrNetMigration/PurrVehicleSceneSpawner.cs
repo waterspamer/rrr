@@ -2,7 +2,44 @@ using System.Collections.Generic;
 using PurrNet;
 using PurrNet.Modules;
 using PurrNet.Prediction;
+using PurrNet.Packing;
+using PurrNet.Transports;
 using UnityEngine;
+
+[System.Serializable]
+public struct PurrVehicleLoadoutMessage : IPackedAuto
+{
+    public string loadoutName;
+    public int bodySetOptionIndex;
+    public int engineIndex;
+    public int suspensionIndex;
+    public int paintIndex;
+
+    public static PurrVehicleLoadoutMessage FromPayload(PlayerCarSelectionPayload payload)
+    {
+        return new PurrVehicleLoadoutMessage
+        {
+            loadoutName = payload != null ? payload.loadoutName ?? string.Empty : string.Empty,
+            bodySetOptionIndex = payload != null ? payload.bodySetOptionIndex : -1,
+            engineIndex = payload != null ? payload.engineIndex : -1,
+            suspensionIndex = payload != null ? payload.suspensionIndex : -1,
+            paintIndex = payload != null ? payload.paintIndex : -1
+        };
+    }
+
+    public PlayerCarSelectionPayload ToPayload()
+    {
+        return new PlayerCarSelectionPayload
+        {
+            version = 1,
+            loadoutName = loadoutName ?? string.Empty,
+            bodySetOptionIndex = bodySetOptionIndex,
+            engineIndex = engineIndex,
+            suspensionIndex = suspensionIndex,
+            paintIndex = paintIndex
+        };
+    }
+}
 
 [DisallowMultipleComponent]
 public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
@@ -16,6 +53,7 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
     [SerializeField, Min(1.0f)] private float groundProbeDistance = 20.0f;
 
     private readonly Dictionary<PlayerID, PredictedObjectID> spawnedPlayers = new Dictionary<PlayerID, PredictedObjectID>();
+    private readonly Dictionary<PlayerID, PlayerCarSelectionPayload> playerLoadouts = new Dictionary<PlayerID, PlayerCarSelectionPayload>();
     private readonly HashSet<PlayerID> queuedPlayers = new HashSet<PlayerID>();
     private readonly List<PlayerID> botPlayers = new List<PlayerID>();
     private readonly List<PlayerID> spawnBuffer = new List<PlayerID>();
@@ -26,6 +64,10 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
     private SceneID activeSceneId;
     private bool hasSceneId;
     private bool isServerSpawner;
+    private bool isClientPublisher;
+    private bool localLoadoutPublished;
+    private bool isEnsuringBots;
+    private int pendingBotCreates;
     private float nextWaitDiagnosticAt;
 
     public void Configure(PlayerCar template, int botCount, PredictionManager world)
@@ -37,22 +79,32 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
 
     private void Update()
     {
-        if (!isServerSpawner)
-            return;
+        if (isClientPublisher)
+            TryPublishLocalLoadout();
 
-        TrySpawnQueuedPlayers();
+        if (isServerSpawner)
+            TrySpawnQueuedPlayers();
     }
 
     public override void Subscribe(NetworkManager manager, bool asServer)
     {
-        if (!asServer || templateCar == null)
+        if (templateCar == null)
             return;
 
-        isServerSpawner = true;
         activeManager = manager;
         ResolveReferences();
+        if (playersManager != null)
+            playersManager.Subscribe<PurrVehicleLoadoutMessage>(OnLoadoutMessage);
 
-        Debug.Log($"PurrVehicleSceneSpawner: subscribe scene='{gameObject.scene.name}' template='{templateCar.name}'", this);
+        if (!asServer)
+        {
+            isClientPublisher = true;
+            Debug.Log($"PurrVehicleSceneSpawner: client subscribe scene='{gameObject.scene.name}' template='{templateCar.name}'", this);
+            return;
+        }
+
+        isServerSpawner = true;
+        Debug.Log($"PurrVehicleSceneSpawner: server subscribe scene='{gameObject.scene.name}' template='{templateCar.name}'", this);
 
         manager.onPlayerLoadedScene += OnPlayerLoadedScene;
         manager.onPlayerLeft += OnPlayerLeft;
@@ -65,12 +117,21 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
 
     public override void Unsubscribe(NetworkManager manager, bool asServer)
     {
-        if (!asServer)
-            return;
+        if (playersManager != null)
+            playersManager.Unsubscribe<PurrVehicleLoadoutMessage>(OnLoadoutMessage);
 
-        manager.onPlayerLoadedScene -= OnPlayerLoadedScene;
-        manager.onPlayerLeft -= OnPlayerLeft;
-        isServerSpawner = false;
+        if (asServer)
+        {
+            manager.onPlayerLoadedScene -= OnPlayerLoadedScene;
+            manager.onPlayerLeft -= OnPlayerLeft;
+            isServerSpawner = false;
+        }
+        else
+        {
+            isClientPublisher = false;
+            localLoadoutPublished = false;
+        }
+
         activeManager = null;
     }
 
@@ -82,9 +143,15 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         if (activeManager != null)
         {
             if (scenePlayers == null)
-                activeManager.TryGetModule(out scenePlayers, true);
+            {
+                if (!activeManager.TryGetModule(out scenePlayers, true))
+                    activeManager.TryGetModule(out scenePlayers, false);
+            }
             if (playersManager == null)
-                activeManager.TryGetModule(out playersManager, true);
+            {
+                if (!activeManager.TryGetModule(out playersManager, true))
+                    activeManager.TryGetModule(out playersManager, false);
+            }
         }
     }
 
@@ -112,16 +179,38 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
 
     private void EnsureBots()
     {
-        if (soloBotCount <= 0 || playersManager == null || scenePlayers == null || !hasSceneId)
+        if (soloBotCount <= 0 || playersManager == null || scenePlayers == null || !hasSceneId || isEnsuringBots)
             return;
 
-        while (botPlayers.Count < soloBotCount)
+        isEnsuringBots = true;
+        try
         {
-            PlayerID bot = playersManager.CreateBot();
-            botPlayers.Add(bot);
-            scenePlayers.AddPlayerToScene(bot, activeSceneId);
-            QueueSpawn(bot);
-            Debug.Log($"PurrVehicleSceneSpawner: created bot {bot} in scene {activeSceneId}.", this);
+            while (botPlayers.Count + pendingBotCreates < soloBotCount)
+            {
+                pendingBotCreates += 1;
+                PlayerID bot;
+                try
+                {
+                    bot = playersManager.CreateBot();
+                }
+                finally
+                {
+                    pendingBotCreates = Mathf.Max(0, pendingBotCreates - 1);
+                }
+
+                if (!botPlayers.Contains(bot))
+                    botPlayers.Add(bot);
+
+                if (!scenePlayers.IsPlayerLoadedInScene(bot, activeSceneId))
+                    scenePlayers.AddPlayerToScene(bot, activeSceneId);
+
+                QueueSpawn(bot);
+                Debug.Log($"PurrVehicleSceneSpawner: created bot {bot} in scene {activeSceneId}.", this);
+            }
+        }
+        finally
+        {
+            isEnsuringBots = false;
         }
     }
 
@@ -135,13 +224,14 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
             activeSceneId = scene;
             hasSceneId = true;
             Debug.Log($"PurrVehicleSceneSpawner: late-bound active scene id to {activeSceneId}.", this);
-            EnsureBots();
         }
 
         if (scene != activeSceneId)
             return;
 
         QueueSpawn(player);
+        if (!player.isBot)
+            EnsureBots();
         TrySpawnQueuedPlayers();
     }
 
@@ -182,6 +272,7 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         spawnBuffer.Clear();
         foreach (PlayerID player in queuedPlayers)
             spawnBuffer.Add(player);
+        spawnBuffer.Sort(CompareSpawnPriority);
 
         for (int i = 0; i < spawnBuffer.Count; i++)
         {
@@ -199,8 +290,9 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         if (!scenePlayers.IsPlayerLoadedInScene(player, activeSceneId))
             return false;
 
+        int spawnSlot = ComputeSpawnSlot(player);
         Vector3 requestedSpawnPosition = templateCar.transform.position +
-                                         templateCar.transform.right * (spawnSpacing * spawnedPlayers.Count) +
+                                         templateCar.transform.right * (spawnSpacing * spawnSlot) +
                                          Vector3.up * spawnLift;
         Quaternion requestedSpawnRotation = templateCar.transform.rotation;
 
@@ -223,6 +315,8 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
             predictionManager.hierarchy.Delete(objectId);
             return false;
         }
+
+        TryApplyLoadout(player, spawnedCar, instance);
 
         Vector3 groundedSpawnPosition = VehicleSpawnUtility.ResolveGroundedSpawnPosition(
             spawnedCar,
@@ -254,5 +348,93 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         Debug.LogWarning(
             $"PurrVehicleSceneSpawner: waiting for spawn. hasSceneId={hasSceneId} queued={queuedPlayers.Count} predictionManager={(predictionManager != null)} predictionSpawned={(predictionManager != null && predictionManager.isSpawned)} hierarchy={(predictionManager != null && predictionManager.hierarchy != null)} scenePlayers={(scenePlayers != null)}",
             this);
+    }
+
+    private void TryPublishLocalLoadout()
+    {
+        if (localLoadoutPublished || playersManager == null || !playersManager.localPlayerId.HasValue)
+            return;
+
+        if (!PlayerCarSelection.TryGetPayload(out PlayerCarSelectionPayload payload) || payload == null)
+            return;
+
+        PurrVehicleLoadoutMessage message = PurrVehicleLoadoutMessage.FromPayload(payload);
+        playersManager.SendToServer(message, Channel.ReliableOrdered);
+        localLoadoutPublished = true;
+        Debug.Log(
+            $"PurrVehicleSceneSpawner: published local loadout '{message.loadoutName}' for player {playersManager.localPlayerId.Value}.",
+            this);
+    }
+
+    private void OnLoadoutMessage(PlayerID player, PurrVehicleLoadoutMessage message, bool asServer)
+    {
+        if (!asServer)
+            return;
+
+        PlayerCarSelectionPayload payload = message.ToPayload();
+        playerLoadouts[player] = payload;
+        Debug.Log($"PurrVehicleSceneSpawner: received loadout '{payload.loadoutName}' for player {player}.", this);
+
+        if (!spawnedPlayers.TryGetValue(player, out PredictedObjectID objectId))
+            return;
+
+        if (!predictionManager.hierarchy.TryGetGameObject(objectId, out GameObject instance) || instance == null)
+            return;
+
+        if (!instance.TryGetComponent(out PlayerCar spawnedCar))
+            return;
+
+        if (TryApplyLoadout(player, spawnedCar, instance))
+            RegroundSpawnedCar(spawnedCar, instance);
+    }
+
+    private bool TryApplyLoadout(PlayerID player, PlayerCar spawnedCar, GameObject instance)
+    {
+        if (spawnedCar == null || !playerLoadouts.TryGetValue(player, out PlayerCarSelectionPayload payload) || payload == null)
+            return false;
+
+        CarLoadoutConfig loadout = PlayerCarLoadoutUtility.ApplySelectedLoadout(spawnedCar, payload);
+        Debug.Log(
+            $"PurrVehicleSceneSpawner: applied loadout '{(loadout != null ? loadout.name : payload.loadoutName)}' to player {player}.",
+            instance);
+        return true;
+    }
+
+    private void RegroundSpawnedCar(PlayerCar spawnedCar, GameObject instance)
+    {
+        if (spawnedCar == null || instance == null)
+            return;
+
+        Vector3 groundedSpawnPosition = VehicleSpawnUtility.ResolveGroundedSpawnPosition(
+            spawnedCar,
+            instance.transform.position,
+            spawnLift,
+            groundProbeHeight,
+            groundProbeDistance,
+            instance.transform);
+        instance.transform.SetPositionAndRotation(groundedSpawnPosition, instance.transform.rotation);
+    }
+
+    private int ComputeSpawnSlot(PlayerID player)
+    {
+        int humanCount = 0;
+        int botCount = 0;
+        foreach (PlayerID spawnedPlayer in spawnedPlayers.Keys)
+        {
+            if (spawnedPlayer.isBot)
+                botCount += 1;
+            else
+                humanCount += 1;
+        }
+
+        return player.isBot ? humanCount + botCount : humanCount;
+    }
+
+    private static int CompareSpawnPriority(PlayerID a, PlayerID b)
+    {
+        if (a.isBot != b.isBot)
+            return a.isBot ? 1 : -1;
+
+        return a.id.value.CompareTo(b.id.value);
     }
 }

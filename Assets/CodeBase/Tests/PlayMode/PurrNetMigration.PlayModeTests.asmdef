@@ -1,6 +1,8 @@
 {
     "name": "PurrNetMigration.PlayModeTests",
-    "references": [],
+    "references": [
+        "Assembly-CSharp"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

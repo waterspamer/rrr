@@ -15,14 +15,17 @@ public sealed class PurrNetDedicatedSmokeTests
     private const int DefaultExpectedCars = 2;
     private const float DefaultTimeoutSeconds = 25.0f;
     private const string DefaultSceneName = "Game";
+    private const string DefaultLoadoutName = "Cooper_Loadout";
 
     private static readonly string[] CommandLineArgs = Environment.GetCommandLineArgs() ?? Array.Empty<string>();
+    private static string expectedLocalConfigName;
 
     [UnitySetUp]
     public IEnumerator SetUp()
     {
         LogAssert.ignoreFailingMessages = true;
         ResetSessionRuntime();
+        ApplySmokeSelection();
         ConfigureClient();
 
         SceneManager.LoadScene(DefaultSceneName, LoadSceneMode.Single);
@@ -54,14 +57,16 @@ public sealed class PurrNetDedicatedSmokeTests
                 out int localOwnedPredictedCars,
                 out int remotePredictedCars,
                 out bool clientConnected,
-                out bool predictionReady);
+                out bool predictionReady,
+                out bool localLoadoutMatched);
             Debug.Log($"PurrNetDedicatedSmokeTests: {lastSummary}");
 
             if (clientConnected &&
                 predictionReady &&
                 activePredictedCars >= expectedCars &&
                 localOwnedPredictedCars >= 1 &&
-                remotePredictedCars >= Mathf.Max(0, expectedCars - 1))
+                remotePredictedCars >= Mathf.Max(0, expectedCars - 1) &&
+                localLoadoutMatched)
             {
                 yield break;
             }
@@ -89,6 +94,65 @@ public sealed class PurrNetDedicatedSmokeTests
         ushort port = (ushort)Mathf.Clamp(GetIntArg("-rrrSmokePort", DefaultPort), 1, 65535);
         int tickRate = Mathf.Clamp(GetIntArg("-rrrSmokeTickRate", DefaultTickRate), 10, 120);
         configureClient.Invoke(null, new object[] { host, port, tickRate });
+    }
+
+    private static void ApplySmokeSelection()
+    {
+        string loadoutName = GetStringArg("-rrrSmokeLoadout", DefaultLoadoutName);
+        Type loadoutType = FindType("CarLoadoutConfig");
+        Type selectionType = FindType("PlayerCarSelection");
+        Assert.NotNull(loadoutType, "CarLoadoutConfig type not found.");
+        Assert.NotNull(selectionType, "PlayerCarSelection type not found.");
+
+        UnityEngine.Object[] loadouts = Resources.LoadAll("Vehicles", loadoutType);
+        UnityEngine.Object loadout = loadouts.FirstOrDefault(candidate =>
+            candidate != null &&
+            (string.Equals(candidate.name, loadoutName, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(Convert.ToString(GetPropertyValue(loadoutType, candidate, "DisplayName")), loadoutName, StringComparison.OrdinalIgnoreCase)));
+
+        if (loadout == null)
+        {
+            Debug.LogWarning($"PurrNetDedicatedSmokeTests: failed to resolve smoke loadout '{loadoutName}'.");
+            expectedLocalConfigName = null;
+            return;
+        }
+
+        object carConfig = GetPropertyValue(loadoutType, loadout, "PlayerCarConfig");
+        object handling = GetPropertyValue(loadoutType, loadout, "HandlingConfig");
+        int bodySetIndex = Convert.ToInt32(GetPropertyValue(loadoutType, loadout, "DefaultBodySetIndex") ?? -1);
+        int engineIndex = Convert.ToInt32(GetPropertyValue(loadoutType, loadout, "DefaultEngineIndex") ?? -1);
+        int suspensionIndex = Convert.ToInt32(GetPropertyValue(loadoutType, loadout, "DefaultSuspensionIndex") ?? -1);
+        int paintIndex = Convert.ToInt32(GetPropertyValue(loadoutType, loadout, "DefaultPaintIndex") ?? -1);
+        object bodySet = ResolveListEntry(loadoutType, loadout, "BodySets", bodySetIndex);
+        object engine = ResolveListEntry(loadoutType, loadout, "EngineConfigs", engineIndex);
+        object suspension = ResolveListEntry(loadoutType, loadout, "SuspensionConfigs", suspensionIndex);
+        object paintConfig = ResolveListEntry(loadoutType, loadout, "PaintOptions", paintIndex);
+        Color paint = ReadColorProperty(paintConfig, "Color", Color.white);
+        bool hasPaint = paintConfig != null;
+
+        MethodInfo setMethod = selectionType.GetMethod("Set", BindingFlags.Public | BindingFlags.Static);
+        Assert.NotNull(setMethod, "PlayerCarSelection.Set not found.");
+        setMethod.Invoke(null, new[]
+        {
+            loadout,
+            carConfig,
+            handling,
+            bodySet,
+            (object)bodySetIndex,
+            engine,
+            (object)engineIndex,
+            suspension,
+            (object)suspensionIndex,
+            paintConfig,
+            (object)paintIndex,
+            paint,
+            hasPaint,
+            null
+        });
+
+        expectedLocalConfigName = GetUnityObjectName(carConfig);
+        Debug.Log(
+            $"PurrNetDedicatedSmokeTests: selected smoke loadout '{loadout.name}' config='{expectedLocalConfigName ?? "null"}'.");
     }
 
     private static void DisableSceneRendering()
@@ -122,13 +186,15 @@ public sealed class PurrNetDedicatedSmokeTests
         out int localOwnedPredictedCars,
         out int remotePredictedCars,
         out bool clientConnected,
-        out bool predictionReady)
+        out bool predictionReady,
+        out bool localLoadoutMatched)
     {
         activePredictedCars = 0;
         localOwnedPredictedCars = 0;
         remotePredictedCars = 0;
         clientConnected = false;
         predictionReady = false;
+        localLoadoutMatched = string.IsNullOrWhiteSpace(expectedLocalConfigName);
 
         Type bootstrapType = FindType("PurrNetGameBootstrap");
         Type networkManagerType = FindType("PurrNet.NetworkManager");
@@ -148,6 +214,7 @@ public sealed class PurrNetDedicatedSmokeTests
         bool hasHierarchy = GetPropertyValue(predictionManager, "hierarchy") != null;
         bool isPredictionSpawned = GetBooleanProperty(predictionManager, "isSpawned");
         predictionReady = predictionManager != null && isPredictionSpawned && hasHierarchy;
+        string localConfigSummary = string.Empty;
 
         for (int i = 0; i < managers.Length; i++)
         {
@@ -174,13 +241,64 @@ public sealed class PurrNetDedicatedSmokeTests
 
             bool isOwner = GetBooleanProperty(component.GetComponent(predictedControllerType), "isOwner");
             if (isOwner)
+            {
                 localOwnedPredictedCars++;
+                Component playerCarComponent = component.GetComponent(playerCarType);
+                object config = playerCarComponent != null ? GetPropertyValue(playerCarType, playerCarComponent, "Config") : null;
+                string configName = GetUnityObjectName(config) ?? "null";
+                if (!string.IsNullOrEmpty(localConfigSummary))
+                    localConfigSummary += ",";
+                localConfigSummary += configName;
+                if (!string.IsNullOrWhiteSpace(expectedLocalConfigName) &&
+                    string.Equals(configName, expectedLocalConfigName, StringComparison.OrdinalIgnoreCase))
+                {
+                    localLoadoutMatched = true;
+                }
+            }
             else
                 remotePredictedCars++;
         }
 
         return
-            $"scene={SceneManager.GetActiveScene().name} bootstrap={(bootstrap != null)} managers={managers.Length} clientStates=[{clientStates}] predictionManager={(predictionManager != null)} predictionSpawned={isPredictionSpawned} hasHierarchy={hasHierarchy} activePredictedCars={activePredictedCars} localOwnedPredictedCars={localOwnedPredictedCars} remotePredictedCars={remotePredictedCars} totalCars={cars.Length}";
+            $"scene={SceneManager.GetActiveScene().name} bootstrap={(bootstrap != null)} managers={managers.Length} clientStates=[{clientStates}] predictionManager={(predictionManager != null)} predictionSpawned={isPredictionSpawned} hasHierarchy={hasHierarchy} activePredictedCars={activePredictedCars} localOwnedPredictedCars={localOwnedPredictedCars} remotePredictedCars={remotePredictedCars} totalCars={cars.Length} expectedLocalConfig={expectedLocalConfigName ?? "null"} localConfigs=[{localConfigSummary}] localLoadoutMatched={localLoadoutMatched}";
+    }
+
+    private static object ResolveListEntry(Type ownerType, object owner, string propertyName, int index)
+    {
+        if (owner == null || ownerType == null || string.IsNullOrWhiteSpace(propertyName) || index < 0)
+            return null;
+
+        object listObject = GetPropertyValue(ownerType, owner, propertyName);
+        if (!(listObject is System.Collections.IList list) || index >= list.Count)
+            return null;
+
+        return list[index];
+    }
+
+    private static object GetPropertyValue(Type type, object target, string propertyName)
+    {
+        if (type == null || target == null || string.IsNullOrWhiteSpace(propertyName))
+            return null;
+
+        PropertyInfo property = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+        return property?.GetValue(target);
+    }
+
+    private static Color ReadColorProperty(object target, string propertyName, Color fallback)
+    {
+        if (target == null)
+            return fallback;
+
+        object value = GetPropertyValue(target.GetType(), target, propertyName);
+        return value is Color color ? color : fallback;
+    }
+
+    private static string GetUnityObjectName(object target)
+    {
+        if (target is UnityEngine.Object unityObject && unityObject != null)
+            return unityObject.name;
+
+        return null;
     }
 
     private static Type FindType(string fullNameOrName)

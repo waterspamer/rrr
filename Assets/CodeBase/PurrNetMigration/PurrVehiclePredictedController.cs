@@ -5,7 +5,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(PlayerCar))]
 [RequireComponent(typeof(Rigidbody))]
-[RequireComponent(typeof(PredictedTransform))]
+[RequireComponent(typeof(SafePredictedTransform))]
 [RequireComponent(typeof(PredictedRigidbody))]
 public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehiclePredictedInput, PurrVehiclePredictedControllerState>
 {
@@ -17,6 +17,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
     [SerializeField] private PurrVehicleBotInputProvider botInputProvider;
 
     private int lastAppliedDamageRevision = int.MinValue;
+    private string lastAppliedLocalLoadoutSignature;
 
     private void Awake()
     {
@@ -210,8 +211,32 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         if (!IsOwner() || playerCar == null)
             return;
 
+        TryApplyLocalOwnedLoadout();
+
         FollowCarCamera followCamera = FindFirstObjectByType<FollowCarCamera>();
         if (followCamera != null)
             followCamera.SetTarget(playerCar.transform);
+    }
+
+    private void TryApplyLocalOwnedLoadout()
+    {
+        if (!PlayerCarSelection.TryGetPayload(out PlayerCarSelectionPayload payload) || payload == null)
+            return;
+
+        string signature = BuildLoadoutSignature(payload);
+        if (signature == lastAppliedLocalLoadoutSignature)
+            return;
+
+        PlayerCarLoadoutUtility.ApplySelectedLoadout(playerCar, payload);
+        lastAppliedLocalLoadoutSignature = signature;
+        Debug.Log($"PurrVehiclePredictedController: applied local owner loadout '{payload.loadoutName}'.", this);
+    }
+
+    private static string BuildLoadoutSignature(PlayerCarSelectionPayload payload)
+    {
+        if (payload == null)
+            return string.Empty;
+
+        return $"{payload.loadoutName}|{payload.bodySetOptionIndex}|{payload.engineIndex}|{payload.suspensionIndex}|{payload.paintIndex}";
     }
 }

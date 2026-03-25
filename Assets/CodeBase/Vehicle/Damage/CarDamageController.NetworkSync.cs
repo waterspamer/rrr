@@ -111,11 +111,22 @@ public partial class CarDamageController
         cpuTexture.Apply(false, false);
         Graphics.Blit(cpuTexture, runtimeTexture);
         ApplyRuntimeTextureToTargets();
+
+        // Predicted/network vehicles only need the authoritative damage texture.
+        // Compute deformation adds unstable runtime dependencies and is currently
+        // the main source of rollback-time errors on clients.
         if (deformMeshWithCompute)
         {
-            if (deformTargets == null || deformTargets.Length == 0)
-                CacheDeformTargets();
-            ApplyComputeDeformation();
+            deformMeshWithCompute = false;
+            damageDeformCompute = null;
+
+            if (!networkComputeDeformationWarningShown)
+            {
+                networkComputeDeformationWarningShown = true;
+                Debug.LogWarning(
+                    "CarDamageController: compute deformation is disabled for network damage snapshots; only the damage map is applied.",
+                    this);
+            }
         }
 
         if (snapshot.revision > damageRevision)

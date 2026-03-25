@@ -15,11 +15,13 @@ public static class PurrNetEditorSmokeRunner
     private const string DurationArg = "-rrrSmokeDuration";
     private const string SceneArg = "-rrrSmokeScene";
     private const string ExpectedCarsArg = "-rrrSmokeExpectedCars";
+    private const string LoadoutArg = "-rrrSmokeLoadout";
 
     private static Stopwatch stopwatch;
     private static double timeoutSeconds;
     private static double nextLogAt;
     private static int expectedCars;
+    private static string expectedLocalConfigName;
     private static bool exitRequested;
     private static bool smokeSucceeded;
 
@@ -33,9 +35,10 @@ public static class PurrNetEditorSmokeRunner
         timeoutSeconds = Mathf.Max(5.0f, GetArgFloat(DurationArg, 20.0f));
         expectedCars = Mathf.Max(1, GetArgInt(ExpectedCarsArg, 2));
         string scenePath = GetArgValue(SceneArg, DefaultScenePath);
+        ApplySmokeSelection();
 
         UnityEngine.Debug.Log(
-            $"PurrNetEditorSmokeRunner: starting client smoke host={host}:{port} tick={tickRate} timeout={timeoutSeconds}s expectedCars={expectedCars} scene='{scenePath}'.");
+            $"PurrNetEditorSmokeRunner: starting client smoke host={host}:{port} tick={tickRate} timeout={timeoutSeconds}s expectedCars={expectedCars} expectedLocalConfig='{expectedLocalConfigName ?? "null"}' scene='{scenePath}'.");
 
         PurrNetSessionRuntime.ConfigureClient(host, port, tickRate);
         EditorSceneManager.OpenScene(scenePath);
@@ -100,6 +103,7 @@ public static class PurrNetEditorSmokeRunner
 
         PlayerCar[] cars = UnityEngine.Object.FindObjectsByType<PlayerCar>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         int activePredictedCars = 0;
+        bool localLoadoutMatched = string.IsNullOrWhiteSpace(expectedLocalConfigName);
         for (int i = 0; i < cars.Length; i++)
         {
             PlayerCar car = cars[i];
@@ -108,9 +112,17 @@ public static class PurrNetEditorSmokeRunner
             if (car.GetComponent<PurrVehiclePredictedController>() == null)
                 continue;
             activePredictedCars++;
+
+            PurrVehiclePredictedController controller = car.GetComponent<PurrVehiclePredictedController>();
+            if (!localLoadoutMatched && controller != null && controller.isOwner)
+            {
+                string configName = car.Config != null ? car.Config.name : string.Empty;
+                if (string.Equals(configName, expectedLocalConfigName, StringComparison.OrdinalIgnoreCase))
+                    localLoadoutMatched = true;
+            }
         }
 
-        return activePredictedCars >= expectedCars;
+        return activePredictedCars >= expectedCars && localLoadoutMatched;
     }
 
     private static void LogSceneState(double elapsed)
@@ -150,7 +162,7 @@ public static class PurrNetEditorSmokeRunner
 
             PurrVehiclePredictedController controller = car.GetComponent<PurrVehiclePredictedController>();
             UnityEngine.Debug.Log(
-                $"PurrNetEditorSmokeRunner: car[{i}] name='{car.name}' activeSelf={car.gameObject.activeSelf} activeInHierarchy={car.gameObject.activeInHierarchy} scene='{car.gameObject.scene.name}' pos={car.transform.position} predicted={(controller != null)} owner={(controller != null ? controller.owner?.ToString() ?? "null" : "none")} isOwner={(controller != null && controller.isOwner)}",
+                $"PurrNetEditorSmokeRunner: car[{i}] name='{car.name}' activeSelf={car.gameObject.activeSelf} activeInHierarchy={car.gameObject.activeInHierarchy} scene='{car.gameObject.scene.name}' pos={car.transform.position} predicted={(controller != null)} owner={(controller != null ? controller.owner?.ToString() ?? "null" : "none")} isOwner={(controller != null && controller.isOwner)} config='{(car.Config != null ? car.Config.name : "null")}' expectedLocalConfig='{expectedLocalConfigName ?? "null"}'",
                 car);
         }
     }
@@ -173,9 +185,74 @@ public static class PurrNetEditorSmokeRunner
         nextLogAt = 0.0;
         timeoutSeconds = 0.0;
         expectedCars = 0;
+        expectedLocalConfigName = null;
         exitRequested = false;
         smokeSucceeded = false;
         PurrNetSessionRuntime.Reset();
+    }
+
+    private static void ApplySmokeSelection()
+    {
+        string loadoutName = GetArgValue(LoadoutArg, "Cooper_Loadout");
+        CarLoadoutConfig[] loadouts = Resources.LoadAll<CarLoadoutConfig>("Vehicles");
+        CarLoadoutConfig loadout = null;
+        for (int i = 0; i < loadouts.Length; i++)
+        {
+            CarLoadoutConfig candidate = loadouts[i];
+            if (candidate == null)
+                continue;
+
+            if (string.Equals(candidate.name, loadoutName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(candidate.DisplayName, loadoutName, StringComparison.OrdinalIgnoreCase))
+            {
+                loadout = candidate;
+                break;
+            }
+        }
+
+        if (loadout == null)
+        {
+            expectedLocalConfigName = null;
+            UnityEngine.Debug.LogWarning($"PurrNetEditorSmokeRunner: failed to resolve smoke loadout '{loadoutName}'.");
+            return;
+        }
+
+        BodySetConfig bodySet = loadout.DefaultBodySetIndex >= 0 &&
+                                loadout.BodySets != null &&
+                                loadout.DefaultBodySetIndex < loadout.BodySets.Count
+            ? loadout.BodySets[loadout.DefaultBodySetIndex]
+            : null;
+        EngineGearboxConfig engine = loadout.EngineConfigs != null && loadout.EngineConfigs.Count > 0
+            ? loadout.EngineConfigs[Mathf.Clamp(loadout.DefaultEngineIndex, 0, loadout.EngineConfigs.Count - 1)]
+            : null;
+        SuspensionConfig suspension = loadout.SuspensionConfigs != null && loadout.SuspensionConfigs.Count > 0
+            ? loadout.SuspensionConfigs[Mathf.Clamp(loadout.DefaultSuspensionIndex, 0, loadout.SuspensionConfigs.Count - 1)]
+            : null;
+        PaintConfig paintConfig = loadout.PaintOptions != null && loadout.PaintOptions.Count > 0
+            ? loadout.PaintOptions[Mathf.Clamp(loadout.DefaultPaintIndex, 0, loadout.PaintOptions.Count - 1)]
+            : null;
+        Color paint = paintConfig != null ? paintConfig.Color : Color.white;
+        bool hasPaint = paintConfig != null;
+
+        PlayerCarSelection.Set(
+            loadout,
+            loadout.PlayerCarConfig,
+            loadout.HandlingConfig,
+            bodySet,
+            loadout.DefaultBodySetIndex,
+            engine,
+            loadout.DefaultEngineIndex,
+            suspension,
+            loadout.DefaultSuspensionIndex,
+            paintConfig,
+            loadout.DefaultPaintIndex,
+            paint,
+            hasPaint,
+            null);
+
+        expectedLocalConfigName = loadout.PlayerCarConfig != null ? loadout.PlayerCarConfig.name : null;
+        UnityEngine.Debug.Log(
+            $"PurrNetEditorSmokeRunner: selected smoke loadout '{loadout.name}' config='{expectedLocalConfigName ?? "null"}'.");
     }
 
     private static string GetArgValue(string key, string fallback)

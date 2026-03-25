@@ -321,10 +321,11 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         GetOrAddComponent<PurrVehicleBotInputProvider>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehiclePredictedController>(runtimeTemplateObject);
 
-        PredictedTransform predictedTransform = GetOrAddComponent<PredictedTransform>(runtimeTemplateObject);
+        SafePredictedTransform predictedTransform = GetOrAddComponent<SafePredictedTransform>(runtimeTemplateObject);
         PredictedRigidbody predictedRigidbody = GetOrAddComponent<PredictedRigidbody>(runtimeTemplateObject);
         SetPrivateField(predictedTransform, "_graphics", ResolveGraphicsRoot(runtimeTemplateCar.transform));
         SetPrivateField(predictedRigidbody, "_rigidbody", runtimeBody);
+        SetPrivateField(predictedRigidbody, "_eventMask", PhysicsEventMask.None);
     }
 
     private static NetworkPrefabs CreateNetworkPrefabs(GameObject templatePrefab)
@@ -545,6 +546,19 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         FieldInfo field = targetType.GetField(fieldName, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         if (field != null)
             field.SetValue(null, value);
+    }
+}
+
+[AddComponentMenu("PurrDiction/Safe Predicted Transform")]
+public sealed class SafePredictedTransform : PredictedTransform
+{
+    protected override void UpdateView(PredictedTransformState viewState, PredictedTransformState? verified)
+    {
+        Transform targetGraphics = graphics;
+        if (targetGraphics == null || !updateGraphics)
+            return;
+
+        targetGraphics.SetPositionAndRotation(viewState.unityPosition, viewState.unityRotation);
     }
 }
 

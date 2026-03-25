@@ -98,6 +98,7 @@ public partial class CarDamageController : MonoBehaviour
     private bool obstacleTagIsValid = true;
     private bool collisionDamageEnabled = true;
     private bool damageSnapshotCaptureWarningShown;
+    private bool networkComputeDeformationWarningShown;
 
     private struct MeshDeformTarget
     {
@@ -266,12 +267,14 @@ public partial class CarDamageController : MonoBehaviour
 
     private void ApplyPlatformCompatibility()
     {
+        bool hasRequiredKernel = damageDeformCompute != null && damageDeformCompute.HasKernel("Deform");
         bool shouldDisableCompute =
             Application.platform == RuntimePlatform.WebGLPlayer ||
             Application.isBatchMode ||
             !SystemInfo.supportsComputeShaders ||
             SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null ||
-            damageDeformCompute == null;
+            damageDeformCompute == null ||
+            !hasRequiredKernel;
 
         if (deformMeshWithCompute && shouldDisableCompute)
         {
