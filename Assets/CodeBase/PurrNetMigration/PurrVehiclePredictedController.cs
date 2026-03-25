@@ -148,7 +148,8 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         if (damageController == null || !state.HasDamageSnapshot)
             return;
 
-        if (state.damage.revision == lastAppliedDamageRevision)
+        int currentAppliedRevision = Mathf.Max(lastAppliedDamageRevision, damageController.DamageRevision);
+        if (state.damage.revision <= currentAppliedRevision)
             return;
 
         CarDamageNetworkSnapshot snapshot = state.CreateDamageSnapshot();

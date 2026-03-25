@@ -450,6 +450,8 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
 
     private ObserverPlayerDebugState BuildPlayerDebugState(PlayerObserverContext playerContext, PurrVehicleSpawnerPlayerObserverRecord tracked)
     {
+        PurrPlayerProfileData profile = playerContext.profile;
+        PurrPlayerStatsData stats = playerContext.stats;
         ObserverPlayerDebugState debug = new ObserverPlayerDebugState
         {
             owner_player_id = playerContext.playerId,
@@ -459,13 +461,33 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             last_spawn_failure_reason = tracked != null ? tracked.lastSpawnFailureReason : string.Empty,
             resolved_car_config_name = playerContext.playerCar != null && playerContext.playerCar.Config != null
                 ? playerContext.playerCar.Config.name
-                : string.Empty
+                : string.Empty,
+            account_player_id = profile != null ? profile.accountPlayerId : string.Empty,
+            auth_provider = profile != null ? profile.authProvider : string.Empty,
+            auth_state = profile != null ? profile.authState : string.Empty,
+            session_id = profile != null ? profile.sessionId : string.Empty
         };
 
         if (tracked != null && tracked.loadout != null)
         {
             debug.loadout_name = tracked.loadout.loadoutName;
             debug.loadout_display_name = tracked.loadout.loadoutDisplayName;
+        }
+
+        if (stats != null)
+        {
+            if (stats.TryGetNumber("current_health", out float currentHealth))
+                debug.current_health = currentHealth;
+            if (stats.TryGetNumber("max_health", out float maxHealth))
+                debug.max_health = maxHealth;
+            if (stats.TryGetNumber("damage_ratio", out float damageRatio))
+                debug.damage_ratio = damageRatio;
+            if (stats.TryGetNumber("nitro", out float syncedNitroAmount))
+                debug.synced_nitro_amount = syncedNitroAmount;
+            if (stats.TryGetNumber("speed_kph", out float syncedSpeed))
+                debug.synced_speed_kph = syncedSpeed;
+            if (stats.TryGetInteger("gear", out long syncedGear))
+                debug.synced_gear = (int)syncedGear;
         }
 
         CarControllerBase controller = playerContext.controller;
@@ -583,8 +605,12 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             string playerId = entity != null ? entity.PlayerId : string.Empty;
             trackedById.TryGetValue(playerId, out PurrVehicleSpawnerPlayerObserverRecord tracked);
             PurrPlayerProfileData profile = null;
+            PurrPlayerStatsData stats = null;
             if (roster != null && !string.IsNullOrWhiteSpace(playerId))
+            {
                 roster.TryGetProfile(playerId, out profile);
+                roster.TryGetStats(playerId, out stats);
+            }
 
             CarDamageController damageController = playerCar.DamageController;
             Rigidbody body = predicted.GetComponent<Rigidbody>();
@@ -601,7 +627,8 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
                 damageController = damageController,
                 body = body,
                 tracked = tracked,
-                profile = profile
+                profile = profile,
+                stats = stats
             });
         }
 
@@ -840,6 +867,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public Rigidbody body;
         public PurrVehicleSpawnerPlayerObserverRecord tracked;
         public PurrPlayerProfileData profile;
+        public PurrPlayerStatsData stats;
     }
 
     private sealed class ObserverSnapshotContext
@@ -1151,6 +1179,16 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
         public string loadout_name;
         public string loadout_display_name;
         public string resolved_car_config_name;
+        public string account_player_id;
+        public string auth_provider;
+        public string auth_state;
+        public string session_id;
+        public float current_health;
+        public float max_health;
+        public float damage_ratio;
+        public float synced_speed_kph;
+        public int synced_gear;
+        public float synced_nitro_amount;
         public int current_gear;
         public int requested_gear;
         public float current_rpm;
