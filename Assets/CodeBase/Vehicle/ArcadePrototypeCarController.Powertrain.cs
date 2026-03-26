@@ -7,6 +7,15 @@ using UnityEngine.SceneManagement;
 public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
 {
     private const string BodyName = "Body";
+    private static readonly System.Type[] VisualGameplayComponentTypes =
+    {
+        typeof(Collider),
+        typeof(Rigidbody),
+        typeof(CarControllerBase),
+        typeof(WheelCollider),
+        typeof(Joint),
+        typeof(CarDamageController)
+    };
     private static readonly string[] WheelNames = { "FrontLeft", "FrontRight", "RearLeft", "RearRight" };
 
     public void Build(
@@ -24,7 +33,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
             visual = new PlayerCarVisualSettings();
 
         visual.Validate();
-        Transform bodyRoot = BuildBody(visual, suspension);
+        Transform bodyRoot = BuildBody(visual, suspension, bodySet, customizations);
         BuildWheels(visual, suspension);
         RebuildBodyCollider(visual, suspension);
 
@@ -50,8 +59,13 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
 
     private Transform BuildBody(
         PlayerCarVisualSettings visual,
-        SuspensionConfig suspension)
+        SuspensionConfig suspension,
+        BodySetConfig bodySet,
+        IReadOnlyList<CarCustomizationSelection> customizations)
     {
+        if (visual != null && visual.bodyPrefab != null)
+            return BuildLoadoutBody(visual, bodySet, customizations);
+
         float wheelHeight = ResolveWheelHeight(visual, suspension);
         float bodyWidth = Mathf.Max(1.6f, visual.axleWidth + 0.45f);
         float bodyLength = Mathf.Max(3.2f, visual.wheelBase + 0.85f);
@@ -79,6 +93,33 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         DestroyRuntimeObject(cabin.GetComponent<Collider>());
 
         return bodyRoot.transform;
+    }
+
+    private Transform BuildLoadoutBody(
+        PlayerCarVisualSettings visual,
+        BodySetConfig bodySet,
+        IReadOnlyList<CarCustomizationSelection> customizations)
+    {
+        GameObject bodyInstance = Instantiate(visual.bodyPrefab, transform);
+        bodyInstance.name = BodyName;
+        bodyInstance.transform.localPosition = Vector3.zero;
+        bodyInstance.transform.localRotation = Quaternion.identity;
+        bodyInstance.transform.localScale = Vector3.one;
+
+        if (bodySet != null && bodySet.BodySetPrefab != null)
+        {
+            GameObject bodySetInstance = Instantiate(bodySet.BodySetPrefab, bodyInstance.transform);
+            bodySetInstance.name = bodySet.BodySetPrefab.name;
+            bodySetInstance.transform.localPosition = Vector3.zero;
+            bodySetInstance.transform.localRotation = Quaternion.identity;
+            bodySetInstance.transform.localScale = Vector3.one;
+        }
+
+        if (customizations != null && customizations.Count > 0)
+            CarCustomizationUtility.ApplySelections(bodyInstance.transform, customizations);
+
+        StripVisualGameplayComponents(bodyInstance);
+        return bodyInstance.transform;
     }
 
     private void BuildWheels(PlayerCarVisualSettings visual, SuspensionConfig suspension)
@@ -112,6 +153,19 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         visualRoot.localRotation = Quaternion.identity;
         visualRoot.localScale = Vector3.one;
 
+        if (visual != null && visual.wheelPrefab != null)
+        {
+            GameObject wheelInstance = Instantiate(visual.wheelPrefab, visualRoot);
+            wheelInstance.name = "WheelMesh";
+            wheelInstance.transform.localPosition = Vector3.zero;
+            wheelInstance.transform.localRotation = rightSide
+                ? Quaternion.Euler(0.0f, 0.0f, 180.0f)
+                : Quaternion.identity;
+            wheelInstance.transform.localScale = Vector3.one;
+            StripVisualGameplayComponents(wheelInstance);
+            return;
+        }
+
         Transform primitive = GameObject.CreatePrimitive(PrimitiveType.Cylinder).transform;
         primitive.name = "WheelMesh";
         primitive.SetParent(visualRoot, false);
@@ -123,6 +177,20 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         Collider primitiveCollider = primitive.GetComponent<Collider>();
         if (primitiveCollider != null)
             DestroyRuntimeObject(primitiveCollider);
+    }
+
+    private static void StripVisualGameplayComponents(GameObject root)
+    {
+        if (root == null)
+            return;
+
+        for (int typeIndex = 0; typeIndex < VisualGameplayComponentTypes.Length; typeIndex++)
+        {
+            System.Type componentType = VisualGameplayComponentTypes[typeIndex];
+            Component[] components = root.GetComponentsInChildren(componentType, true);
+            for (int componentIndex = 0; componentIndex < components.Length; componentIndex++)
+                DestroyRuntimeObject(components[componentIndex]);
+        }
     }
 
     private void RebuildBodyCollider(PlayerCarVisualSettings visual, SuspensionConfig suspension)
