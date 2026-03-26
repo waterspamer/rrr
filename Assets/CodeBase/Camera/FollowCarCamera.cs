@@ -90,6 +90,8 @@ public class FollowCarCamera : MonoBehaviour
     [SerializeField] private Vector3 shotRotationShake = new Vector3(0.4f, 0.8f, 1.3f);
     [SerializeField, Min(0.0f)] private float collisionMinImpulse = 2.0f;
     [SerializeField, Min(0.0f)] private float collisionMaxImpulse = 120.0f;
+    [SerializeField, Min(0.0f)] private float collisionMinShakeSpeedKmh = 20.0f;
+    [SerializeField, Min(0.1f)] private float collisionFullShakeSpeedKmh = 90.0f;
     [SerializeField, Min(0.0f)] private float collisionMinShakeStrength = 0.2f;
     [SerializeField, Min(0.0f)] private float collisionMaxShakeStrength = 1.0f;
     [SerializeField, Min(0.0f)] private float collisionShakeDuration = 0.22f;
@@ -529,9 +531,15 @@ public class FollowCarCamera : MonoBehaviour
             Mathf.Max(1, shotShakeFrequency));
     }
 
-    public void PlayCollisionShake(float impulse)
+    public void PlayCollisionShake(float impulse, float impactSpeedKmh)
     {
         if (!enableCameraShake)
+            return;
+
+        float minShakeSpeed = Mathf.Max(0.0f, collisionMinShakeSpeedKmh);
+        float fullShakeSpeed = Mathf.Max(minShakeSpeed + 0.1f, collisionFullShakeSpeedKmh);
+        float speed01 = Mathf.InverseLerp(minShakeSpeed, fullShakeSpeed, Mathf.Max(0.0f, impactSpeedKmh));
+        if (speed01 <= 0.0001f)
             return;
 
         float minImpulse = Mathf.Max(0.0f, collisionMinImpulse);
@@ -540,15 +548,15 @@ public class FollowCarCamera : MonoBehaviour
         if (impulse01 <= 0.0001f)
             return;
 
-        // Tiny contacts should be nearly invisible; noticeable shake starts only after a clear impact.
-        float response = Mathf.Pow(impulse01, 3.5f);
+        // Physics impulses spike hard on contact resolution, so shake is weighted by both impulse and real impact speed.
+        float response = Mathf.Pow(impulse01, 3.5f) * Mathf.SmoothStep(0.0f, 1.0f, speed01);
         if (response <= 0.0025f)
             return;
 
         float maxStrength = Mathf.Lerp(
             Mathf.Max(0.0f, collisionMinShakeStrength),
             Mathf.Max(collisionMinShakeStrength, collisionMaxShakeStrength),
-            Mathf.Sqrt(impulse01));
+            Mathf.Sqrt(impulse01) * Mathf.Lerp(0.35f, 1.0f, speed01));
         float strength = maxStrength * response;
         if (strength <= 0.0001f)
             return;

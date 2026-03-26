@@ -75,7 +75,7 @@ public partial class CarDamageController
             else
                 damageManager.SpawnCollisionEffect(worldPoint, worldNormal);
         }
-        followCarCamera?.PlayCollisionShake(effectiveImpulse);
+        followCarCamera?.PlayCollisionShake(effectiveImpulse, impactSpeedKmh);
 
         Debug.Log($"CarDamageController hit {debugLabel} impulse={impulseMagnitude:0.000} effectiveImpulse={effectiveImpulse:0.000} impactSpeed={impactSpeedKmh:0.0}km/h normalImpact={normalImpact:0.00} amount={amount:0.000}", this);
 
