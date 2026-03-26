@@ -559,6 +559,7 @@ public sealed partial class ArcadePrototypeCarController
 
     private void ApplySimulatedTransform(Vector3 position, Quaternion rotation)
     {
+        RecordSimulationPose(position, rotation);
         transform.SetPositionAndRotation(position, rotation);
         if (body == null)
             return;
@@ -589,6 +590,7 @@ public sealed partial class ArcadePrototypeCarController
         body.isKinematic = true;
         body.useGravity = false;
         body.detectCollisions = true;
+        RecordSimulationPose(transform.position, transform.rotation, true);
     }
 
     private void RefreshBodyColliderShape()
@@ -608,6 +610,48 @@ public sealed partial class ArcadePrototypeCarController
     private static Vector3 Abs(Vector3 value)
     {
         return new Vector3(Mathf.Abs(value.x), Mathf.Abs(value.y), Mathf.Abs(value.z));
+    }
+
+    private void RecordSimulationPose(Vector3 position, Quaternion rotation, bool forceReset = false)
+    {
+        if (!renderPoseInitialized || forceReset)
+        {
+            previousSimulationPosition = position;
+            previousSimulationRotation = rotation;
+            currentSimulationPosition = position;
+            currentSimulationRotation = rotation;
+            renderPoseInitialized = true;
+        }
+        else
+        {
+            previousSimulationPosition = currentSimulationPosition;
+            previousSimulationRotation = currentSimulationRotation;
+            currentSimulationPosition = position;
+            currentSimulationRotation = rotation;
+        }
+
+        lastSimulationTime = Time.time;
+        lastSimulationDeltaTime = Time.inFixedTimeStep ? Time.fixedDeltaTime : Mathf.Max(0.0001f, Time.deltaTime);
+    }
+
+    private void UpdateCameraTargetAnchor()
+    {
+        if (cameraTargetAnchor == null)
+            return;
+
+        if (!renderPoseInitialized)
+        {
+            cameraTargetAnchor.localPosition = Vector3.zero;
+            cameraTargetAnchor.localRotation = Quaternion.identity;
+            return;
+        }
+
+        float delta = Mathf.Max(0.0001f, lastSimulationDeltaTime);
+        float alpha = Mathf.Clamp01((Time.time - lastSimulationTime) / delta);
+        Vector3 interpolatedPosition = Vector3.Lerp(previousSimulationPosition, currentSimulationPosition, alpha);
+        Quaternion interpolatedRotation = Quaternion.Slerp(previousSimulationRotation, currentSimulationRotation, alpha);
+        cameraTargetAnchor.localPosition = transform.InverseTransformPoint(interpolatedPosition);
+        cameraTargetAnchor.localRotation = Quaternion.Inverse(transform.rotation) * interpolatedRotation;
     }
 
     private void UpdateWheelVisuals(float deltaTime)
@@ -729,6 +773,26 @@ public sealed partial class ArcadePrototypeCarController
     {
         if (!drawDebug)
             return;
+
+        if (bodyCollider != null)
+        {
+            Matrix4x4 previousMatrix = Gizmos.matrix;
+            Gizmos.matrix = Matrix4x4.TRS(GetBodyCenter(transform.position, transform.rotation), transform.rotation, Vector3.one);
+            Gizmos.color = new Color(0.3f, 0.7f, 1.0f, 0.8f);
+            Gizmos.DrawWireCube(Vector3.zero, bodyColliderHalfExtents * 2.0f);
+            Gizmos.matrix = previousMatrix;
+
+            Vector3 centerOfMassWorld = GetCenterOfMassWorld(transform.position, transform.rotation);
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawSphere(centerOfMassWorld, 0.08f);
+            Gizmos.DrawRay(centerOfMassWorld, customLinearVelocity * 0.15f);
+
+            if (cameraTargetAnchor != null)
+            {
+                Gizmos.color = new Color(1.0f, 0.2f, 0.8f, 0.85f);
+                Gizmos.DrawWireSphere(cameraTargetAnchor.position, 0.12f);
+            }
+        }
 
         for (int i = 0; i < wheelBindings.Length; i++)
         {

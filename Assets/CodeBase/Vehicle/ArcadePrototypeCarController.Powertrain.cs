@@ -304,7 +304,7 @@ public sealed class ArcadePrototypeSceneBootstrap : MonoBehaviour
 
         FollowCarCamera followCamera = Object.FindFirstObjectByType<FollowCarCamera>();
         if (followCamera != null)
-            followCamera.SetTarget(instance.transform);
+            followCamera.SetTarget(controller.CameraTarget);
 
         spawnedVehicle = instance;
     }

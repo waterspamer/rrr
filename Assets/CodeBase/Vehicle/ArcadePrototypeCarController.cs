@@ -106,6 +106,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     [Header("Visuals")]
     [SerializeField] private string steeringWheelName = "Steering";
+    [SerializeField] private string cameraTargetName = "CameraTarget";
     [SerializeField, Min(1.0f)] private float steeringWheelMaxRotation = 540.0f;
     [SerializeField, Min(1.0f)] private float steeringWheelResponse = 14.0f;
 
@@ -120,6 +121,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private SimulationState simulationState;
     private Transform steeringWheel;
+    private Transform cameraTargetAnchor;
     private Quaternion steeringWheelBaseRotation = Quaternion.identity;
     private BoxCollider bodyCollider;
     private Vector3 bodyColliderCenterLocal;
@@ -135,15 +137,28 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     private float timeSinceGrounded;
     private float landingGripBlend = 1.0f;
     private bool wasGroundedLastFrame;
+    private Vector3 previousSimulationPosition;
+    private Quaternion previousSimulationRotation = Quaternion.identity;
+    private Vector3 currentSimulationPosition;
+    private Quaternion currentSimulationRotation = Quaternion.identity;
+    private float lastSimulationTime;
+    private float lastSimulationDeltaTime = 0.02f;
+    private bool renderPoseInitialized;
 
     public float SpeedKph => customLinearVelocity.magnitude * 3.6f;
     public float SpeedForward => Vector3.Dot(customLinearVelocity, transform.forward);
     public float SpeedAbs => customLinearVelocity.magnitude;
     public float CurrentRpm => simulationState.currentRpm;
     public int CurrentGear => simulationState.currentGear;
+    public float ShiftTimeRemaining => simulationState.shiftTimer;
+    public float CurrentGearRatio => GetGearRatio(simulationState.currentGear);
+    public float MaxRpm => engineConfig != null && engineConfig.engine != null ? engineConfig.engine.maxRpm : 0.0f;
+    public float IdleRpm => engineConfig != null && engineConfig.engine != null ? engineConfig.engine.idleRpm : 0.0f;
+    public float EngineHorsepower => engineConfig != null ? engineConfig.horsepower : 0.0f;
     public int GroundedWheels => groundedWheels;
     public bool IsGrounded => groundedWheels > 0 || timeSinceGrounded < coyoteTime;
     public VehicleState CurrentState => CaptureState();
+    public Transform CameraTarget => cameraTargetAnchor != null ? cameraTargetAnchor : transform;
 
     public void ConfigureResolved(
         VehicleSettings handling,
@@ -277,6 +292,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private void LateUpdate()
     {
+        UpdateCameraTargetAnchor();
         UpdateWheelVisuals(Time.deltaTime);
         UpdateSteeringWheelVisual(Time.deltaTime);
     }
@@ -301,6 +317,11 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     public void SetNitro(bool nitro)
     {
         currentNitroInput = nitro;
+    }
+
+    public void SetGear(int gear)
+    {
+        RequestShift(ref simulationState, gear);
     }
 
     public void Simulate(VehicleInput input, float deltaTime)
@@ -373,6 +394,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         }
 
         ResolveSteeringWheel();
+        ResolveCameraTargetAnchor();
         BindWheels();
         RefreshBodyColliderShape();
     }
@@ -392,6 +414,26 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
             steeringWheelBaseRotation = steeringWheel.localRotation;
             return;
         }
+    }
+
+    private void ResolveCameraTargetAnchor()
+    {
+        if (cameraTargetAnchor != null)
+            return;
+
+        Transform existing = FindNamedTransform(cameraTargetName);
+        if (existing != null)
+        {
+            cameraTargetAnchor = existing;
+            return;
+        }
+
+        GameObject anchorObject = new GameObject(cameraTargetName);
+        cameraTargetAnchor = anchorObject.transform;
+        cameraTargetAnchor.SetParent(transform, false);
+        cameraTargetAnchor.localPosition = Vector3.zero;
+        cameraTargetAnchor.localRotation = Quaternion.identity;
+        cameraTargetAnchor.localScale = Vector3.one;
     }
 
     private void BindWheels()
@@ -497,8 +539,14 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     private void ResetPresentationBaseline()
     {
         ResolveSteeringWheel();
+        ResolveCameraTargetAnchor();
         if (steeringWheel != null)
             steeringWheel.localRotation = steeringWheelBaseRotation;
+        if (cameraTargetAnchor != null)
+        {
+            cameraTargetAnchor.localPosition = Vector3.zero;
+            cameraTargetAnchor.localRotation = Quaternion.identity;
+        }
 
         for (int i = 0; i < wheelBindings.Length; i++)
         {
