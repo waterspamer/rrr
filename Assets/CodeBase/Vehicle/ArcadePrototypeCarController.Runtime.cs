@@ -37,10 +37,9 @@ public sealed partial class ArcadePrototypeCarController
         if (handlingConfig != null)
             body.mass = Mathf.Max(50.0f, handlingConfig.mass);
         RefreshBodyColliderShape();
-        float centerOfMassY = centerOfMassOffsetY;
-        if (suspensionConfig != null)
-            centerOfMassY += suspensionConfig.centerOfMassHeight;
-        body.centerOfMass = bodyColliderCenterLocal + new Vector3(0.0f, centerOfMassY, 0.0f);
+        float centerOfMassY = suspensionConfig != null ? suspensionConfig.centerOfMassHeight : 0.3f;
+        centerOfMassY = Mathf.Max(0.05f, centerOfMassY + centerOfMassOffsetY + GetWheelRadius());
+        body.centerOfMass = new Vector3(0.0f, centerOfMassY, 0.0f);
 
         body.interpolation = RigidbodyInterpolation.None;
         body.maxAngularVelocity = maxAngularVelocity;
@@ -297,6 +296,8 @@ public sealed partial class ArcadePrototypeCarController
         {
             AddForce(-transform.right * localVelocity.x * handlingConfig.lateralStability * body.mass * stabilizerForceScale);
             AddTorque(-transform.up * localAngularVelocity.y * handlingConfig.yawStability * body.mass * stabilizerForceScale);
+            AddTorque(-transform.forward * localAngularVelocity.z * handlingConfig.lateralStability * body.mass * stabilizerForceScale);
+            AddTorque(-transform.right * localAngularVelocity.x * handlingConfig.yawStability * body.mass * stabilizerForceScale * 0.35f);
         }
 
         ApplyAssistForces(inputs);
