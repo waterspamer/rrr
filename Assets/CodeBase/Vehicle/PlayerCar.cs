@@ -24,6 +24,9 @@ public class PlayerCar : MonoBehaviour
     public PlayerCarConfig Config => config;
     public CarControllerBase Controller => controller;
     public CarDamageController DamageController => damageController;
+    public VehicleSettings HandlingConfig => handlingConfig;
+    public EngineGearboxConfig EngineConfig => engineGearboxConfig;
+    public SuspensionConfig SuspensionConfig => suspensionConfig;
 
     public void SetInitialLoadout(PlayerCarConfig carConfig, VehicleSettings handling, EngineGearboxConfig engineConfig, SuspensionConfig suspension)
     {
