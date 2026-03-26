@@ -20,6 +20,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
 
     public void Build(
         PlayerCarConfig carConfig,
+        VehicleSettings handling,
         SuspensionConfig suspension,
         BodySetConfig bodySet,
         IReadOnlyList<CarCustomizationSelection> customizations,
@@ -33,12 +34,23 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
             visual = new PlayerCarVisualSettings();
 
         visual.Validate();
-        Transform bodyRoot = BuildBody(visual, suspension, bodySet, customizations);
-        BuildWheels(visual, suspension);
-        RebuildBodyCollider(visual, suspension);
+        Transform bodyRoot = BuildBody(visual, handling, suspension, bodySet, customizations);
+        BuildWheels(visual, handling, suspension);
+        RebuildBodyCollider(visual, handling, suspension);
 
         if (applyPaint)
             ApplyPaint(bodyRoot, visual, paint);
+    }
+
+    public void Build(
+        PlayerCarConfig carConfig,
+        SuspensionConfig suspension,
+        BodySetConfig bodySet,
+        IReadOnlyList<CarCustomizationSelection> customizations,
+        Color paint,
+        bool applyPaint)
+    {
+        Build(carConfig, null, suspension, bodySet, customizations, paint, applyPaint);
     }
 
     private void ClearGeneratedRig()
@@ -59,6 +71,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
 
     private Transform BuildBody(
         PlayerCarVisualSettings visual,
+        VehicleSettings handling,
         SuspensionConfig suspension,
         BodySetConfig bodySet,
         IReadOnlyList<CarCustomizationSelection> customizations)
@@ -66,7 +79,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         if (visual != null && visual.bodyPrefab != null)
             return BuildLoadoutBody(visual, bodySet, customizations);
 
-        float wheelHeight = ResolveWheelHeight(visual, suspension);
+        float wheelHeight = ResolveWheelCenterHeight(visual, handling, suspension);
         float bodyWidth = Mathf.Max(1.6f, visual.axleWidth + 0.45f);
         float bodyLength = Mathf.Max(3.2f, visual.wheelBase + 0.85f);
         float bodyHeight = 0.75f;
@@ -122,23 +135,25 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         return bodyInstance.transform;
     }
 
-    private void BuildWheels(PlayerCarVisualSettings visual, SuspensionConfig suspension)
+    private void BuildWheels(PlayerCarVisualSettings visual, VehicleSettings handling, SuspensionConfig suspension)
     {
-        float wheelHeight = ResolveWheelHeight(visual, suspension);
+        float wheelHeight = ResolveWheelCenterHeight(visual, handling, suspension);
         float restLength = ResolveRestLength(suspension);
+        float wheelRadius = ResolveWheelRadius(visual, handling);
+        float wheelWidth = ResolveWheelWidth(handling);
 
         float halfWheelBase = visual.wheelBase * 0.5f;
         float halfAxle = visual.axleWidth * 0.5f;
         float frontZ = visual.zOffset + halfWheelBase;
         float rearZ = visual.zOffset - halfWheelBase;
 
-        CreateWheel(visual, WheelNames[0], new Vector3(-halfAxle, wheelHeight + restLength, frontZ), restLength, false);
-        CreateWheel(visual, WheelNames[1], new Vector3(halfAxle, wheelHeight + restLength, frontZ), restLength, true);
-        CreateWheel(visual, WheelNames[2], new Vector3(-halfAxle, wheelHeight + restLength, rearZ), restLength, false);
-        CreateWheel(visual, WheelNames[3], new Vector3(halfAxle, wheelHeight + restLength, rearZ), restLength, true);
+        CreateWheel(visual, WheelNames[0], new Vector3(-halfAxle, wheelHeight + restLength, frontZ), restLength, wheelRadius, wheelWidth, false);
+        CreateWheel(visual, WheelNames[1], new Vector3(halfAxle, wheelHeight + restLength, frontZ), restLength, wheelRadius, wheelWidth, true);
+        CreateWheel(visual, WheelNames[2], new Vector3(-halfAxle, wheelHeight + restLength, rearZ), restLength, wheelRadius, wheelWidth, false);
+        CreateWheel(visual, WheelNames[3], new Vector3(halfAxle, wheelHeight + restLength, rearZ), restLength, wheelRadius, wheelWidth, true);
     }
 
-    private void CreateWheel(PlayerCarVisualSettings visual, string wheelName, Vector3 localPosition, float restLength, bool rightSide)
+    private void CreateWheel(PlayerCarVisualSettings visual, string wheelName, Vector3 localPosition, float restLength, float wheelRadius, float wheelWidth, bool rightSide)
     {
         GameObject hardpoint = new GameObject(wheelName);
         hardpoint.transform.SetParent(transform, false);
@@ -171,8 +186,6 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         primitive.SetParent(visualRoot, false);
         primitive.localPosition = Vector3.zero;
         primitive.localRotation = Quaternion.Euler(0.0f, 0.0f, rightSide ? 270.0f : 90.0f);
-        const float wheelRadius = 0.35f;
-        const float wheelWidth = 0.22f;
         primitive.localScale = new Vector3(wheelRadius * 2.0f, wheelWidth * 0.5f, wheelRadius * 2.0f);
         Collider primitiveCollider = primitive.GetComponent<Collider>();
         if (primitiveCollider != null)
@@ -193,10 +206,10 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         }
     }
 
-    private void RebuildBodyCollider(PlayerCarVisualSettings visual, SuspensionConfig suspension)
+    private void RebuildBodyCollider(PlayerCarVisualSettings visual, VehicleSettings handling, SuspensionConfig suspension)
     {
         BoxCollider collider = gameObject.AddComponent<BoxCollider>();
-        float wheelHeight = ResolveWheelHeight(visual, suspension);
+        float wheelHeight = ResolveWheelCenterHeight(visual, handling, suspension);
         float bodyWidth = Mathf.Max(1.6f, visual.axleWidth + 0.35f);
         float bodyLength = Mathf.Max(3.2f, visual.wheelBase + 0.65f);
         collider.center = new Vector3(0.0f, wheelHeight + 0.68f, 0.0f);
@@ -244,17 +257,34 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         }
     }
 
-    private static float ResolveWheelHeight(PlayerCarVisualSettings visual, SuspensionConfig suspension)
+    private static float ResolveWheelCenterHeight(PlayerCarVisualSettings visual, VehicleSettings handling, SuspensionConfig suspension)
     {
-        float wheelHeight = visual != null ? visual.wheelHeight : 0.35f;
+        float wheelRadius = ResolveWheelRadius(visual, handling);
+        float wheelHeight = visual != null ? Mathf.Max(wheelRadius, visual.wheelHeight) : wheelRadius;
         if (suspension != null)
         {
             suspension.Validate();
             if (suspension.applyVisualRideHeight)
-                wheelHeight = suspension.visualWheelHeight;
+                wheelHeight = Mathf.Max(wheelRadius, suspension.visualWheelHeight);
         }
 
         return wheelHeight;
+    }
+
+    private static float ResolveWheelRadius(PlayerCarVisualSettings visual, VehicleSettings handling)
+    {
+        if (handling != null)
+            return Mathf.Clamp(handling.wheelRadius, 0.05f, 2.0f);
+
+        if (visual != null)
+            return Mathf.Clamp(visual.wheelHeight, 0.05f, 2.0f);
+
+        return 0.35f;
+    }
+
+    private static float ResolveWheelWidth(VehicleSettings handling)
+    {
+        return handling != null ? Mathf.Clamp(handling.wheelWidth, 0.05f, 1.0f) : 0.22f;
     }
 
     private static float ResolveRestLength(SuspensionConfig suspension)
@@ -265,7 +295,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         suspension.Validate();
         float distance = Mathf.Clamp(suspension.suspensionDistance, 0.05f, 0.5f);
         float target = Mathf.Clamp01(suspension.suspensionTargetPosition);
-        return Mathf.Clamp(distance * target, 0.02f, distance);
+        return Mathf.Clamp(distance * (1.0f - target), 0.02f, distance);
     }
 
     private static void DestroyRuntimeObject(Object target)
@@ -357,6 +387,7 @@ public sealed class ArcadePrototypeSceneBootstrap : MonoBehaviour
 
         rigBuilder.Build(
             resolved.carConfig,
+            resolved.handling,
             resolved.suspension,
             resolved.bodySet,
             resolved.customizations,

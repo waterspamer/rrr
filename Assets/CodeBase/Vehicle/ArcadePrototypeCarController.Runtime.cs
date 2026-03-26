@@ -821,7 +821,7 @@ public sealed partial class ArcadePrototypeCarController
     {
         float distance = GetSuspensionDistance();
         float targetPosition = suspensionConfig != null ? Mathf.Clamp01(suspensionConfig.suspensionTargetPosition) : 0.5f;
-        return Mathf.Clamp(distance * targetPosition, 0.02f, distance);
+        return Mathf.Clamp(distance * (1.0f - targetPosition), 0.02f, distance);
     }
 
     private static float CalculateSpringRate(float sprungMass, float frequency)
