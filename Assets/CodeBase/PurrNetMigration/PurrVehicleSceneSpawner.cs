@@ -545,6 +545,14 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         if (!predictionManager.hierarchy.TryGetGameObject(objectId, out GameObject instance) || instance == null)
             return false;
 
+        PurrVehicleSimulationBridge bridge = instance.GetComponent<PurrVehicleSimulationBridge>();
+        if (bridge != null && bridge.HasController)
+        {
+            frame = bridge.LastAppliedControlFrame;
+            frame.Clamp();
+            return true;
+        }
+
         CarControllerBase controller = null;
         if (instance.TryGetComponent(out PlayerCar spawnedCar) && spawnedCar != null)
             controller = spawnedCar.Controller;

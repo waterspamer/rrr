@@ -28,6 +28,45 @@ MonoBehaviour:
     paintProperty: _MainColor
     paintAllChildRenderers: 1
     paintRenderers: []
+  useArcadePrototypeControllerTuning: 1
+  arcadePrototypeController:
+    groundMask:
+      serializedVersion: 2
+      m_Bits: 4294967295
+    bodyCollisionMask:
+      serializedVersion: 2
+      m_Bits: 4294967295
+    suspensionRayExtraDistance: 0.2
+    driveForceScale: 1
+    lateralForceScale: 2.4
+    longitudinalGripScale: 1.6
+    brakeForceScale: 5
+    stabilizerForceScale: 1
+    compressionDampingScale: 0.6
+    reboundDampingScale: 0.5
+    maxReboundForceRatio: 1
+    springStartToWheelCenterDistanceOverride: -1
+    bodyLiftOffset: 0.27
+    centerOfMassOffsetY: 1.45
+    maxAngularVelocity: 10
+    wheelProbeRadiusScale: 0.2
+    uprightAssist: 1
+    uprightAssistInAir: 1.5
+    yawAssist: 1.5
+    extraGravityInAir: 0
+    coyoteTime: 0.08
+    landingGripBlendTime: 0.18
+    landingGripStart: 0.25
+    airPitchTorque: 1200
+    airYawTorque: 500
+    airRollTorque: 800
+    bodyCollisionRestitution: 0.02
+    dynamicBodyPushScale: 1
+    collisionSkin: 0.02
+    maxSweepIterations: 3
+    maxDepenetrationIterations: 4
+    disableLegacyCollisionShell: 1
+    useLocalInput: 1
   damage:
     damageTexture: {fileID: 0}
     targetRenderer: {fileID: 0}

@@ -262,7 +262,7 @@ public class FollowCarCamera : MonoBehaviour
 
     public void SetTarget(Transform newTarget)
     {
-        target = newTarget;
+        target = ResolvePreferredTarget(newTarget);
         if (target != null)
         {
             smoothedTargetPivot = target.TransformPoint(pivotOffset);
@@ -274,6 +274,18 @@ public class FollowCarCamera : MonoBehaviour
             smoothedTargetPivotVelocity = Vector3.zero;
             hasSmoothedTargetPivot = false;
         }
+    }
+
+    private static Transform ResolvePreferredTarget(Transform candidate)
+    {
+        if (candidate == null)
+            return null;
+
+        ArcadePrototypeCarController prototype = candidate.GetComponentInParent<ArcadePrototypeCarController>();
+        if (prototype != null && prototype.CameraTarget != null)
+            return prototype.CameraTarget;
+
+        return candidate;
     }
 
     private Vector3 GetEffectivePivot(Vector3 rawPivot)

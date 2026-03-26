@@ -17,6 +17,7 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
     [Min(0.1f)] public float reboundDampingScale = 1.85f;
     [Range(0.0f, 1.0f)] public float maxReboundForceRatio = 0.45f;
     public float springStartToWheelCenterDistanceOverride = -1.0f;
+    public float bodyLiftOffset = 0.0f;
     public float centerOfMassOffsetY = -0.45f;
     [Min(1.0f)] public float maxAngularVelocity = 10.0f;
     [Range(0.2f, 1.0f)] public float wheelProbeRadiusScale = 0.86f;
@@ -30,6 +31,8 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
     [Min(0.0f)] public float airPitchTorque = 1200.0f;
     [Min(0.0f)] public float airYawTorque = 500.0f;
     [Min(0.0f)] public float airRollTorque = 800.0f;
+    [Range(0.0f, 1.0f)] public float bodyCollisionRestitution = 0.02f;
+    [Min(0.0f)] public float dynamicBodyPushScale = 1.0f;
     [Min(0.001f)] public float collisionSkin = 0.02f;
     [Range(1, 6)] public int maxSweepIterations = 3;
     [Range(1, 8)] public int maxDepenetrationIterations = 4;
@@ -54,6 +57,7 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
         maxReboundForceRatio = Mathf.Clamp01(maxReboundForceRatio);
         if (springStartToWheelCenterDistanceOverride > 0.0f)
             springStartToWheelCenterDistanceOverride = Mathf.Clamp(springStartToWheelCenterDistanceOverride, 0.02f, 1.0f);
+        bodyLiftOffset = Mathf.Clamp(bodyLiftOffset, -0.5f, 1.0f);
         maxAngularVelocity = Mathf.Max(1.0f, maxAngularVelocity);
         wheelProbeRadiusScale = Mathf.Clamp(wheelProbeRadiusScale, 0.2f, 1.0f);
         uprightAssist = Mathf.Max(0.0f, uprightAssist);
@@ -66,6 +70,8 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
         airPitchTorque = Mathf.Max(0.0f, airPitchTorque);
         airYawTorque = Mathf.Max(0.0f, airYawTorque);
         airRollTorque = Mathf.Max(0.0f, airRollTorque);
+        bodyCollisionRestitution = Mathf.Clamp01(bodyCollisionRestitution);
+        dynamicBodyPushScale = Mathf.Max(0.0f, dynamicBodyPushScale);
         collisionSkin = Mathf.Max(0.001f, collisionSkin);
         maxSweepIterations = Mathf.Clamp(maxSweepIterations, 1, 6);
         maxDepenetrationIterations = Mathf.Clamp(maxDepenetrationIterations, 1, 8);
@@ -415,13 +421,21 @@ public sealed class ArcadePrototypeSceneTuning : MonoBehaviour
             customizations = useSelectedLoadoutAsBase
                 ? (PlayerCarLoadoutUtility.ResolveCustomizations(payload) ?? new List<CarCustomizationSelection>())
                 : new List<CarCustomizationSelection>(),
-            controllerTuning = CloneControllerTuning()
+            controllerTuning = CloneControllerTuning(ResolveControllerTuningSource(baseCarConfig))
         };
 
         layout.ApplyTo(resolved.carConfig, baseCarConfig == null);
         handling.ApplyTo(resolved.handling, baseHandling == null);
         engine.ApplyTo(resolved.engine, baseEngine == null);
         suspension.ApplyTo(resolved.suspension, baseSuspension == null);
+        if (resolved.carConfig == null || !resolved.carConfig.UseArcadePrototypeControllerTuning)
+        {
+            resolved.controllerTuning.bodyLiftOffset += ResolveConfiguredBodyLiftOffset(
+                resolved.carConfig,
+                resolved.handling,
+                resolved.suspension);
+        }
+        resolved.controllerTuning.Validate();
 
         if (useSelectedPaint && useSelectedLoadoutAsBase && PlayerCarLoadoutUtility.TryResolvePaint(loadout, payload, out Color paint))
         {
@@ -460,43 +474,76 @@ public sealed class ArcadePrototypeSceneTuning : MonoBehaviour
         controller.Validate();
     }
 
-    private ArcadePrototypeControllerRuntimeTuning CloneControllerTuning()
+    private ArcadePrototypeControllerRuntimeTuning ResolveControllerTuningSource(PlayerCarConfig carConfig)
     {
+        if (carConfig != null && carConfig.UseArcadePrototypeControllerTuning && carConfig.ArcadePrototypeController != null)
+            return carConfig.ArcadePrototypeController;
+
+        return controller;
+    }
+
+    private ArcadePrototypeControllerRuntimeTuning CloneControllerTuning(ArcadePrototypeControllerRuntimeTuning source)
+    {
+        source ??= controller;
         ArcadePrototypeControllerRuntimeTuning clone = new ArcadePrototypeControllerRuntimeTuning
         {
-            groundMask = controller.groundMask,
-            bodyCollisionMask = controller.bodyCollisionMask,
-            suspensionRayExtraDistance = controller.suspensionRayExtraDistance,
-            driveForceScale = controller.driveForceScale,
-            lateralForceScale = controller.lateralForceScale,
-            longitudinalGripScale = controller.longitudinalGripScale,
-            brakeForceScale = controller.brakeForceScale,
-            stabilizerForceScale = controller.stabilizerForceScale,
-            compressionDampingScale = controller.compressionDampingScale,
-            reboundDampingScale = controller.reboundDampingScale,
-            maxReboundForceRatio = controller.maxReboundForceRatio,
-            springStartToWheelCenterDistanceOverride = controller.springStartToWheelCenterDistanceOverride,
-            centerOfMassOffsetY = controller.centerOfMassOffsetY,
-            maxAngularVelocity = controller.maxAngularVelocity,
-            wheelProbeRadiusScale = controller.wheelProbeRadiusScale,
-            uprightAssist = controller.uprightAssist,
-            uprightAssistInAir = controller.uprightAssistInAir,
-            yawAssist = controller.yawAssist,
-            extraGravityInAir = controller.extraGravityInAir,
-            coyoteTime = controller.coyoteTime,
-            landingGripBlendTime = controller.landingGripBlendTime,
-            landingGripStart = controller.landingGripStart,
-            airPitchTorque = controller.airPitchTorque,
-            airYawTorque = controller.airYawTorque,
-            airRollTorque = controller.airRollTorque,
-            collisionSkin = controller.collisionSkin,
-            maxSweepIterations = controller.maxSweepIterations,
-            maxDepenetrationIterations = controller.maxDepenetrationIterations,
-            disableLegacyCollisionShell = controller.disableLegacyCollisionShell,
-            useLocalInput = controller.useLocalInput
+            groundMask = source.groundMask,
+            bodyCollisionMask = source.bodyCollisionMask,
+            suspensionRayExtraDistance = source.suspensionRayExtraDistance,
+            driveForceScale = source.driveForceScale,
+            lateralForceScale = source.lateralForceScale,
+            longitudinalGripScale = source.longitudinalGripScale,
+            brakeForceScale = source.brakeForceScale,
+            stabilizerForceScale = source.stabilizerForceScale,
+            compressionDampingScale = source.compressionDampingScale,
+            reboundDampingScale = source.reboundDampingScale,
+            maxReboundForceRatio = source.maxReboundForceRatio,
+            springStartToWheelCenterDistanceOverride = source.springStartToWheelCenterDistanceOverride,
+            bodyLiftOffset = source.bodyLiftOffset,
+            centerOfMassOffsetY = source.centerOfMassOffsetY,
+            maxAngularVelocity = source.maxAngularVelocity,
+            wheelProbeRadiusScale = source.wheelProbeRadiusScale,
+            uprightAssist = source.uprightAssist,
+            uprightAssistInAir = source.uprightAssistInAir,
+            yawAssist = source.yawAssist,
+            extraGravityInAir = source.extraGravityInAir,
+            coyoteTime = source.coyoteTime,
+            landingGripBlendTime = source.landingGripBlendTime,
+            landingGripStart = source.landingGripStart,
+            airPitchTorque = source.airPitchTorque,
+            airYawTorque = source.airYawTorque,
+            airRollTorque = source.airRollTorque,
+            bodyCollisionRestitution = source.bodyCollisionRestitution,
+            dynamicBodyPushScale = source.dynamicBodyPushScale,
+            collisionSkin = source.collisionSkin,
+            maxSweepIterations = source.maxSweepIterations,
+            maxDepenetrationIterations = source.maxDepenetrationIterations,
+            disableLegacyCollisionShell = source.disableLegacyCollisionShell,
+            useLocalInput = source.useLocalInput
         };
         clone.Validate();
         return clone;
+    }
+
+    private static float ResolveConfiguredBodyLiftOffset(PlayerCarConfig carConfig, VehicleSettings handling, SuspensionConfig suspension)
+    {
+        PlayerCarVisualSettings visual = carConfig != null ? carConfig.Visual : null;
+        if (visual == null)
+            return 0.0f;
+
+        visual.Validate();
+        float wheelRadius = handling != null
+            ? Mathf.Clamp(handling.wheelRadius, 0.05f, 2.0f)
+            : Mathf.Clamp(visual.wheelHeight, 0.05f, 2.0f);
+        float wheelCenterHeight = Mathf.Max(wheelRadius, visual.wheelHeight);
+        if (suspension != null)
+        {
+            suspension.Validate();
+            if (suspension.applyVisualRideHeight)
+                wheelCenterHeight = Mathf.Max(wheelRadius, suspension.visualWheelHeight);
+        }
+
+        return wheelCenterHeight * Mathf.Clamp01(visual.bodyRootHeightFactor);
     }
 
     private static PlayerCarConfig CloneOrCreateCarConfig(PlayerCarConfig source)

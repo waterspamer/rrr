@@ -882,9 +882,9 @@ public sealed class PurrVehiclePlayerRoster : PurrMonoBehaviour
             if (entity == null || !entity.IsLocalPlayer)
                 continue;
 
-            CarControllerBase controller = entity.GetComponent<CarControllerBase>();
-            if (controller == null)
-                controller = entity.GetComponentInParent<CarControllerBase>();
+            PurrVehicleSimulationBridge simulationBridge = entity.GetComponent<PurrVehicleSimulationBridge>();
+            if (simulationBridge == null)
+                simulationBridge = entity.GetComponentInParent<PurrVehicleSimulationBridge>();
             CarDamageController damageController = entity.GetComponent<CarDamageController>();
             if (damageController == null)
                 damageController = entity.GetComponentInParent<CarDamageController>();
@@ -898,10 +898,10 @@ public sealed class PurrVehiclePlayerRoster : PurrMonoBehaviour
             stats.SetNumber("max_health", "Max Health", 100.0f, 0.0f, 100.0f, hasRange: true);
             stats.SetNumber("damage_ratio", "Damage", damageFraction, 0.0f, 1.0f, hasRange: true);
             stats.SetInteger("damage_revision", "Damage Revision", damageController != null ? damageController.DamageRevision : 0);
-            stats.SetNumber("speed_kph", "Speed", controller != null ? controller.SpeedKph : 0.0f, 0.0f, 320.0f, hasRange: true);
-            stats.SetInteger("gear", "Gear", controller != null ? controller.CurrentGear : 0, -1, 8, hasRange: true);
-            stats.SetNumber("nitro", "Nitro", controller != null ? controller.NitroAmount : 0.0f, 0.0f, 1.0f, hasRange: true);
-            stats.SetBoolean("nitro_active", "Nitro Active", controller != null && controller.NitroActive);
+            stats.SetNumber("speed_kph", "Speed", simulationBridge != null ? simulationBridge.SpeedKph : 0.0f, 0.0f, 320.0f, hasRange: true);
+            stats.SetInteger("gear", "Gear", simulationBridge != null ? simulationBridge.CurrentGear : 0, -1, 8, hasRange: true);
+            stats.SetNumber("nitro", "Nitro", simulationBridge != null ? simulationBridge.NitroAmount : 0.0f, 0.0f, 1.0f, hasRange: true);
+            stats.SetBoolean("nitro_active", "Nitro Active", simulationBridge != null && simulationBridge.NitroActive);
             return true;
         }
 

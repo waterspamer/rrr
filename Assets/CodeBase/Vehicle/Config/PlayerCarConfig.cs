@@ -7,17 +7,36 @@ public class PlayerCarConfig : ScriptableObject
     [Header("Visual")]
     [SerializeField] private PlayerCarVisualSettings visual = new PlayerCarVisualSettings();
 
+    [Header("Arcade Prototype")]
+    [SerializeField] private bool useArcadePrototypeControllerTuning;
+    [SerializeField] private ArcadePrototypeControllerRuntimeTuning arcadePrototypeController = new ArcadePrototypeControllerRuntimeTuning();
+
+    [Header("Direct Multiplayer")]
+    [SerializeField] private DirectMultiplayerSimulationBackend directMultiplayerSimulationBackend =
+        DirectMultiplayerSimulationBackend.LegacyController;
+
     [Header("Damage")]
     [SerializeField] private PlayerCarDamageSettings damage = new PlayerCarDamageSettings();
 
     public PlayerCarVisualSettings Visual => visual;
+    public bool UseArcadePrototypeControllerTuning => useArcadePrototypeControllerTuning;
+    public ArcadePrototypeControllerRuntimeTuning ArcadePrototypeController => arcadePrototypeController;
+    public DirectMultiplayerSimulationBackend DirectMultiplayerSimulationBackend => directMultiplayerSimulationBackend;
     public PlayerCarDamageSettings Damage => damage;
 
     private void OnValidate()
     {
         visual?.Validate();
+        arcadePrototypeController?.Validate();
         damage?.Validate();
     }
+}
+
+[Serializable]
+public enum DirectMultiplayerSimulationBackend : byte
+{
+    LegacyController = 0,
+    ArcadePrototype = 1
 }
 
 [System.Serializable]

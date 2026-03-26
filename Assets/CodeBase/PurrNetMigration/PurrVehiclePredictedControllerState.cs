@@ -2,6 +2,14 @@ using System;
 using PurrNet.Prediction;
 
 [Serializable]
+public enum PurrVehicleSimulationBackend : byte
+{
+    None = 0,
+    LegacyController = 1,
+    ArcadePrototype = 2
+}
+
+[Serializable]
 public struct PurrVehiclePredictedDamageState
 {
     public int revision;
@@ -49,21 +57,41 @@ public struct PurrVehiclePredictedDamageState
 
 public struct PurrVehiclePredictedControllerState : IPredictedData<PurrVehiclePredictedControllerState>
 {
-    public CarControllerSimulationState simulation;
+    public byte simulationBackend;
+    public CarControllerSimulationState legacySimulation;
+    public ArcadePrototypeCarController.VehicleState arcadeSimulation;
     public PurrVehiclePredictedDamageState damage;
 
-    public static PurrVehiclePredictedControllerState Capture(CarControllerBase controller, CarDamageController damageController)
+    public static PurrVehiclePredictedControllerState Capture(PurrVehicleSimulationBridge bridge, CarDamageController damageController)
     {
+        PurrVehicleSimulationBackend backend = PurrVehicleSimulationBackend.None;
+        CarControllerSimulationState legacy = default;
+        ArcadePrototypeCarController.VehicleState arcade = default;
+
+        if (bridge != null)
+        {
+            if (bridge.UsesArcadeController)
+            {
+                backend = PurrVehicleSimulationBackend.ArcadePrototype;
+                ArcadePrototypeCarController controller = bridge.ArcadeController;
+                if (controller != null)
+                    arcade = controller.CaptureState();
+            }
+            else if (bridge.UsesLegacyController)
+            {
+                backend = PurrVehicleSimulationBackend.LegacyController;
+                CarControllerBase controller = bridge.LegacyController;
+                legacy = controller != null ? controller.CaptureSimulationState() : default;
+            }
+        }
+
         return new PurrVehiclePredictedControllerState
         {
-            simulation = controller != null ? controller.CaptureSimulationState() : default,
+            simulationBackend = (byte)backend,
+            legacySimulation = legacy,
+            arcadeSimulation = arcade,
             damage = PurrVehiclePredictedDamageState.Capture(damageController)
         };
-    }
-
-    public CarControllerSimulationState ToSimulationState()
-    {
-        return simulation;
     }
 
     public bool HasDamageSnapshot => damage.HasSnapshot;

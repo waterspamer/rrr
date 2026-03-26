@@ -384,7 +384,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
     {
         PlayerCar playerCar = playerContext.playerCar;
         Rigidbody body = playerContext.body;
-        CarControllerBase controller = playerContext.controller;
+        PurrVehicleSimulationBridge simulationBridge = playerContext.simulationBridge;
         PurrVehicleSpawnerPlayerObserverRecord tracked = playerContext.tracked;
         PurrPlayerProfileData profile = playerContext.profile;
         PlayerCarSelectionPayload loadout = tracked != null ? tracked.loadout : null;
@@ -417,13 +417,13 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             ack_input_seq = 0,
             client_time = 0,
             server_received_time = serverTime,
-            input = controller != null
-                ? BackendCarControlInputPayload.FromControlFrame(controller.LastAppliedControlFrame)
+            input = simulationBridge != null
+                ? BackendCarControlInputPayload.FromControlFrame(simulationBridge.LastAppliedControlFrame)
                 : new BackendCarControlInputPayload(),
             position = currentPosition,
             rotation = currentRotation,
-            velocity = BackendVector3.FromVector3(body != null ? body.linearVelocity : Vector3.zero),
-            angular_velocity = BackendVector3.FromVector3(body != null ? body.angularVelocity : Vector3.zero),
+            velocity = BackendVector3.FromVector3(simulationBridge != null ? simulationBridge.LinearVelocity : body != null ? body.linearVelocity : Vector3.zero),
+            angular_velocity = BackendVector3.FromVector3(simulationBridge != null ? simulationBridge.AngularVelocity : body != null ? body.angularVelocity : Vector3.zero),
             car_config = BuildCarConfigPayload(loadout, playerCar),
             debug = BuildPlayerDebugState(playerContext, tracked)
         };
@@ -568,33 +568,51 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
                 debug.synced_gear = (int)syncedGear;
         }
 
-        CarControllerBase controller = playerContext.controller;
-        if (controller == null)
+        PurrVehicleSimulationBridge simulationBridge = playerContext.simulationBridge;
+        if (simulationBridge == null)
             return debug;
 
-        CarControllerSimulationState simulationState = controller.CaptureSimulationState();
-        debug.current_gear = simulationState.currentGear;
-        debug.requested_gear = simulationState.requestedGear;
-        debug.current_rpm = simulationState.currentRpm;
-        debug.shift_timer = simulationState.shiftTimer;
-        debug.shift_target_rpm = simulationState.shiftTargetRpm;
-        debug.shift_state = simulationState.shiftState;
-        debug.steer_angle = simulationState.currentSteerAngle;
-        debug.steering_wheel_angle = simulationState.currentSteeringWheelAngle;
-        debug.drift_kick_force = simulationState.currentDriftKickForce;
-        debug.nitro_amount = simulationState.nitroAmount;
-        debug.nitro_active = simulationState.nitroActive;
-        debug.nitro_initialized = simulationState.nitroInitialized;
-        debug.speed_kph = controller.SpeedKph;
-        debug.motor_torque = controller.LastMotorTorque;
-        debug.brake_torque = controller.LastBrakeTorque;
-        debug.rear_brake_torque = controller.LastRearBrakeTorque;
-        debug.grounded_wheels = controller.GroundedWheelCount;
-        debug.wheel_count = controller.WheelCount;
-        debug.input_enabled = controller.InputEnabled;
-        debug.physics_simulation_enabled = controller.PhysicsSimulationEnabled;
-        debug.manual_simulation_enabled = controller.ManualSimulationEnabled;
-        debug.sleeping = controller.IsRigidBodySleeping;
+        if (simulationBridge.TryCaptureLegacySimulation(out CarControllerSimulationState legacySimulation))
+        {
+            debug.current_gear = legacySimulation.currentGear;
+            debug.requested_gear = legacySimulation.requestedGear;
+            debug.current_rpm = legacySimulation.currentRpm;
+            debug.shift_timer = legacySimulation.shiftTimer;
+            debug.shift_target_rpm = legacySimulation.shiftTargetRpm;
+            debug.shift_state = legacySimulation.shiftState;
+            debug.steer_angle = legacySimulation.currentSteerAngle;
+            debug.steering_wheel_angle = legacySimulation.currentSteeringWheelAngle;
+            debug.drift_kick_force = legacySimulation.currentDriftKickForce;
+            debug.nitro_amount = legacySimulation.nitroAmount;
+            debug.nitro_active = legacySimulation.nitroActive;
+            debug.nitro_initialized = legacySimulation.nitroInitialized;
+        }
+        else if (simulationBridge.TryCaptureArcadeSimulation(out ArcadePrototypeCarController.VehicleState arcadeSimulation))
+        {
+            debug.current_gear = arcadeSimulation.simulation.currentGear;
+            debug.requested_gear = arcadeSimulation.simulation.requestedGear;
+            debug.current_rpm = arcadeSimulation.simulation.currentRpm;
+            debug.shift_timer = arcadeSimulation.simulation.shiftTimer;
+            debug.shift_target_rpm = arcadeSimulation.simulation.shiftTargetRpm;
+            debug.shift_state = arcadeSimulation.simulation.shiftState;
+            debug.steer_angle = arcadeSimulation.simulation.currentSteerAngle;
+            debug.steering_wheel_angle = arcadeSimulation.simulation.currentSteeringWheelAngle;
+            debug.drift_kick_force = arcadeSimulation.simulation.currentDriftKickForce;
+            debug.nitro_amount = arcadeSimulation.simulation.nitroAmount;
+            debug.nitro_active = arcadeSimulation.simulation.nitroActive;
+            debug.nitro_initialized = arcadeSimulation.simulation.nitroInitialized;
+        }
+
+        debug.speed_kph = simulationBridge.SpeedKph;
+        debug.motor_torque = simulationBridge.LastMotorTorque;
+        debug.brake_torque = simulationBridge.LastBrakeTorque;
+        debug.rear_brake_torque = simulationBridge.LastRearBrakeTorque;
+        debug.grounded_wheels = simulationBridge.GroundedWheelCount;
+        debug.wheel_count = simulationBridge.WheelCount;
+        debug.input_enabled = simulationBridge.InputEnabled;
+        debug.physics_simulation_enabled = simulationBridge.PhysicsSimulationEnabled;
+        debug.manual_simulation_enabled = simulationBridge.ManualSimulationEnabled;
+        debug.sleeping = simulationBridge.IsSleeping;
 
         CarDamageController damageController = playerContext.damageController;
         debug.has_damage_controller = damageController != null;
@@ -702,14 +720,14 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
             if (body != null && body.IsSleeping())
                 context.sleepingRigidBodyCount += 1;
 
-            context.players.Add(new PlayerObserverContext
-            {
-                playerId = playerId,
-                playerCar = playerCar,
-                controller = playerCar.Controller != null ? playerCar.Controller : predicted.GetComponent<CarControllerBase>(),
-                damageController = damageController,
-                body = body,
-                tracked = tracked,
+                context.players.Add(new PlayerObserverContext
+                {
+                    playerId = playerId,
+                    playerCar = playerCar,
+                    simulationBridge = predicted.GetComponent<PurrVehicleSimulationBridge>(),
+                    damageController = damageController,
+                    body = body,
+                    tracked = tracked,
                 profile = profile,
                 stats = stats
             });
@@ -989,7 +1007,7 @@ public sealed class PurrNetDedicatedObserverRuntime : MonoBehaviour
     {
         public string playerId;
         public PlayerCar playerCar;
-        public CarControllerBase controller;
+        public PurrVehicleSimulationBridge simulationBridge;
         public CarDamageController damageController;
         public Rigidbody body;
         public PurrVehicleSpawnerPlayerObserverRecord tracked;

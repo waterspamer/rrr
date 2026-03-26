@@ -76,6 +76,7 @@ public sealed partial class ArcadePrototypeCarController
             wheelStates[i].compression = 0.0f;
             wheelStates[i].compression01 = 0.0f;
             wheelStates[i].spinAngle = 0.0f;
+            wheelStates[i].spinVelocity = 0.0f;
             wheelStates[i].steerAngle = 0.0f;
             wheelStates[i].springForce = 0.0f;
             wheelStates[i].contactPoint = transform.position;
@@ -135,7 +136,7 @@ public sealed partial class ArcadePrototypeCarController
             }
             else
             {
-                AdvanceWheelSpin(i, customLinearVelocity.magnitude, deltaTime);
+                AdvanceWheelSpinAirborne(i, deltaTime);
             }
 
             wheelStates[i] = state;
@@ -165,7 +166,7 @@ public sealed partial class ArcadePrototypeCarController
             Quaternion steerRotation = Quaternion.AngleAxis(state.steerAngle, transform.up);
             Vector3 wheelForward = steerRotation * transform.forward;
             Vector3 pointVelocity = GetPointVelocityCustom(state.contactPoint);
-            AdvanceWheelSpin(i, Mathf.Abs(Vector3.Dot(pointVelocity, wheelForward)), deltaTime);
+            AdvanceWheelSpinFromSurfaceSpeed(i, Vector3.Dot(pointVelocity, wheelForward), deltaTime);
         }
 
         ApplyAntiRollForces();
@@ -412,9 +413,7 @@ public sealed partial class ArcadePrototypeCarController
             float safeDistance = Mathf.Max(0.0f, hit.distance - collisionSkin);
             position += direction * safeDistance;
 
-            float velocityIntoSurface = Vector3.Dot(customLinearVelocity, hit.normal);
-            if (velocityIntoSurface < 0.0f)
-                customLinearVelocity -= hit.normal * velocityIntoSurface;
+            ResolveBodyCollision(hit.collider, hit.point, hit.normal);
 
             remaining = Vector3.ProjectOnPlane(remaining - direction * safeDistance, hit.normal);
             position += hit.normal * Mathf.Min(collisionSkin, 0.01f);
@@ -463,9 +462,8 @@ public sealed partial class ArcadePrototypeCarController
                 separation += direction * (distance + collisionSkin);
                 penetrationCount++;
 
-                float velocityIntoSurface = Vector3.Dot(customLinearVelocity, direction);
-                if (velocityIntoSurface < 0.0f)
-                    customLinearVelocity -= direction * velocityIntoSurface;
+                Vector3 contactPoint = other.ClosestPoint(GetBodyCenter(position, rotation));
+                ResolveBodyCollision(other, contactPoint, direction);
             }
 
             if (penetrationCount == 0 || separation.sqrMagnitude <= 0.000001f)
@@ -522,6 +520,52 @@ public sealed partial class ArcadePrototypeCarController
                collider.attachedRigidbody == body;
     }
 
+    private void ResolveBodyCollision(Collider otherCollider, Vector3 contactPoint, Vector3 normal)
+    {
+        if (otherCollider == null || normal.sqrMagnitude <= 0.0001f)
+            return;
+
+        Rigidbody otherBody = otherCollider.attachedRigidbody;
+        Vector3 collisionNormal = normal.normalized;
+        Vector3 carPointVelocity = GetPointVelocityCustom(contactPoint);
+        Vector3 otherPointVelocity = otherBody != null && !otherBody.isKinematic
+            ? otherBody.GetPointVelocity(contactPoint)
+            : Vector3.zero;
+        Vector3 relativeVelocity = carPointVelocity - otherPointVelocity;
+        float closingSpeed = Vector3.Dot(relativeVelocity, collisionNormal);
+        if (closingSpeed >= -0.001f)
+            return;
+
+        float carMass = Mathf.Max(50.0f, body != null ? body.mass : 1200.0f);
+        float otherMass = otherBody != null && !otherBody.isKinematic
+            ? Mathf.Max(0.001f, otherBody.mass)
+            : float.PositiveInfinity;
+        float inverseMassSum = (1.0f / carMass) + (float.IsPositiveInfinity(otherMass) ? 0.0f : (1.0f / otherMass));
+        if (inverseMassSum <= 0.0001f)
+            return;
+
+        float impulseMagnitude = -(1.0f + bodyCollisionRestitution) * closingSpeed / inverseMassSum;
+        if (impulseMagnitude <= 0.0001f)
+            return;
+
+        Vector3 impulse = collisionNormal * impulseMagnitude;
+        ApplyImpulseAtPosition(impulse, contactPoint);
+
+        if (otherBody != null && !otherBody.isKinematic)
+            otherBody.AddForceAtPosition(-impulse * dynamicBodyPushScale, contactPoint, ForceMode.Impulse);
+
+        BodyCollisionResolved?.Invoke(new BodyCollisionEvent
+        {
+            point = contactPoint,
+            normal = collisionNormal,
+            relativeVelocity = relativeVelocity,
+            impulse = impulse,
+            otherCollider = otherCollider,
+            otherBody = otherBody,
+            otherBodyDynamic = otherBody != null && !otherBody.isKinematic
+        });
+    }
+
     private Vector3 GetPointVelocityCustom(Vector3 worldPoint)
     {
         Vector3 offset = worldPoint - GetCenterOfMassWorld(transform.position, transform.rotation);
@@ -538,6 +582,15 @@ public sealed partial class ArcadePrototypeCarController
         accumulatedForce += force;
         Vector3 leverArm = worldPoint - GetCenterOfMassWorld(transform.position, transform.rotation);
         accumulatedTorque += Vector3.Cross(leverArm, force);
+    }
+
+    private void ApplyImpulseAtPosition(Vector3 impulse, Vector3 worldPoint)
+    {
+        float mass = Mathf.Max(50.0f, body != null ? body.mass : 1200.0f);
+        customLinearVelocity += impulse / mass;
+        Vector3 leverArm = worldPoint - GetCenterOfMassWorld(transform.position, transform.rotation);
+        customAngularVelocity += ComputeAngularVelocityDelta(Vector3.Cross(leverArm, impulse));
+        customAngularVelocity = Vector3.ClampMagnitude(customAngularVelocity, maxAngularVelocity);
     }
 
     private void AddTorque(Vector3 worldTorque)
@@ -564,6 +617,22 @@ public sealed partial class ArcadePrototypeCarController
             localTorque.y / inertiaY,
             localTorque.z / inertiaZ);
         return transform.rotation * localAngularAcceleration;
+    }
+
+    private Vector3 ComputeAngularVelocityDelta(Vector3 worldAngularImpulse)
+    {
+        Vector3 size = bodyCollider != null ? bodyCollider.size : new Vector3(1.8f, 0.7f, 4.0f);
+        float mass = Mathf.Max(50.0f, body.mass);
+        float inertiaX = Mathf.Max(1.0f, mass * (size.y * size.y + size.z * size.z) / 12.0f);
+        float inertiaY = Mathf.Max(1.0f, mass * (size.x * size.x + size.z * size.z) / 12.0f);
+        float inertiaZ = Mathf.Max(1.0f, mass * (size.x * size.x + size.y * size.y) / 12.0f);
+
+        Vector3 localAngularImpulse = Quaternion.Inverse(transform.rotation) * worldAngularImpulse;
+        Vector3 localAngularVelocityDelta = new Vector3(
+            localAngularImpulse.x / inertiaX,
+            localAngularImpulse.y / inertiaY,
+            localAngularImpulse.z / inertiaZ);
+        return transform.rotation * localAngularVelocityDelta;
     }
 
     private Quaternion IntegrateRotation(Quaternion rotation, Vector3 angularVelocity, float deltaTime)
@@ -776,12 +845,39 @@ public sealed partial class ArcadePrototypeCarController
         steeringWheel.localRotation = steeringWheelBaseRotation * Quaternion.Euler(0.0f, 0.0f, simulationState.currentSteeringWheelAngle);
     }
 
-    private void AdvanceWheelSpin(int wheelIndex, float forwardSpeed, float deltaTime)
+    private void AdvanceWheelSpinFromSurfaceSpeed(int wheelIndex, float forwardSpeed, float deltaTime)
     {
+        WheelRuntimeState state = wheelStates[wheelIndex];
+        if (currentInput.handbrake > 0.01f && wheelBindings[wheelIndex].handbrake)
+        {
+            state.spinVelocity = 0.0f;
+            wheelStates[wheelIndex] = state;
+            return;
+        }
+
         float circumference = Mathf.Max(0.01f, 2.0f * Mathf.PI * GetWheelRadius());
-        float degreesPerSecond = (forwardSpeed / circumference) * 360.0f;
-        wheelStates[wheelIndex].spinAngle = Mathf.Repeat(wheelStates[wheelIndex].spinAngle + degreesPerSecond * deltaTime, 360.0f);
+        float targetDegreesPerSecond = (forwardSpeed / circumference) * 360.0f;
+        float response = 1.0f - Mathf.Exp(-24.0f * deltaTime);
+        state.spinVelocity = Mathf.Lerp(state.spinVelocity, targetDegreesPerSecond, response);
+        state.spinAngle = Mathf.Repeat(state.spinAngle + state.spinVelocity * deltaTime, 360.0f);
+        wheelStates[wheelIndex] = state;
     }
+
+    private void AdvanceWheelSpinAirborne(int wheelIndex, float deltaTime)
+    {
+        WheelRuntimeState state = wheelStates[wheelIndex];
+        if (currentInput.handbrake > 0.01f && wheelBindings[wheelIndex].handbrake)
+        {
+            state.spinVelocity = 0.0f;
+            wheelStates[wheelIndex] = state;
+            return;
+        }
+
+        state.spinAngle = Mathf.Repeat(state.spinAngle + state.spinVelocity * deltaTime, 360.0f);
+        state.spinVelocity *= Mathf.Exp(-1.2f * deltaTime);
+        wheelStates[wheelIndex] = state;
+    }
+
 
     private int CountDriveWheels()
     {

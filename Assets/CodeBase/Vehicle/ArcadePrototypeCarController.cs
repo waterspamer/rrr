@@ -32,6 +32,18 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     }
 
     [Serializable]
+    public struct BodyCollisionEvent
+    {
+        public Vector3 point;
+        public Vector3 normal;
+        public Vector3 relativeVelocity;
+        public Vector3 impulse;
+        public Collider otherCollider;
+        public Rigidbody otherBody;
+        public bool otherBodyDynamic;
+    }
+
+    [Serializable]
     private struct VehicleInputs
     {
         public float Motor;
@@ -62,6 +74,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         public float compression;
         public float compression01;
         public float spinAngle;
+        public float spinVelocity;
         public float steerAngle;
         public float springForce;
         public Vector3 contactPoint;
@@ -88,6 +101,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     [SerializeField, Min(0.1f)] private float reboundDampingScale = 1.85f;
     [SerializeField, Range(0.0f, 1.0f)] private float maxReboundForceRatio = 0.45f;
     [SerializeField] private float springStartToWheelCenterDistanceOverride = -1.0f;
+    [SerializeField] private float bodyLiftOffset = 0.0f;
     [SerializeField] private float centerOfMassOffsetY = -0.45f;
     [SerializeField, Min(1.0f)] private float maxAngularVelocity = 10.0f;
     [SerializeField, Range(0.2f, 1.0f)] private float wheelProbeRadiusScale = 0.86f;
@@ -101,6 +115,8 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     [SerializeField, Min(0.0f)] private float airPitchTorque = 1200.0f;
     [SerializeField, Min(0.0f)] private float airYawTorque = 500.0f;
     [SerializeField, Min(0.0f)] private float airRollTorque = 800.0f;
+    [SerializeField, Range(0.0f, 1.0f)] private float bodyCollisionRestitution = 0.02f;
+    [SerializeField, Min(0.0f)] private float dynamicBodyPushScale = 1.0f;
     [SerializeField, Min(0.001f)] private float collisionSkin = 0.02f;
     [SerializeField, Range(1, 6)] private int maxSweepIterations = 3;
     [SerializeField, Range(1, 8)] private int maxDepenetrationIterations = 4;
@@ -124,13 +140,18 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private SimulationState simulationState;
     private Transform bodyVisualRoot;
+    private Transform bodyVisualSourceRoot;
     private Transform steeringWheel;
     private Transform cameraTargetAnchor;
     private Vector3 bodyVisualBaseLocalPosition;
+    private Vector3 bodyVisualSourceLocalPosition;
     private Quaternion bodyVisualBaseLocalRotation = Quaternion.identity;
+    private Quaternion bodyVisualSourceLocalRotation = Quaternion.identity;
     private Quaternion steeringWheelBaseRotation = Quaternion.identity;
     private BoxCollider bodyCollider;
+    private BoxCollider bodyColliderSource;
     private Vector3 bodyColliderCenterLocal;
+    private Vector3 bodyColliderSourceCenterLocal;
     private Vector3 bodyColliderHalfExtents;
     private Vector3 customLinearVelocity;
     private Vector3 customAngularVelocity;
@@ -154,17 +175,25 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     public float SpeedKph => customLinearVelocity.magnitude * 3.6f;
     public float SpeedForward => Vector3.Dot(customLinearVelocity, transform.forward);
     public float SpeedAbs => customLinearVelocity.magnitude;
+    public Vector3 LinearVelocity => customLinearVelocity;
+    public Vector3 AngularVelocity => customAngularVelocity;
     public float CurrentRpm => simulationState.currentRpm;
     public int CurrentGear => simulationState.currentGear;
+    public float NitroAmount => simulationState.nitroAmount;
+    public bool NitroActive => simulationState.nitroActive;
     public float ShiftTimeRemaining => simulationState.shiftTimer;
     public float CurrentGearRatio => GetGearRatio(simulationState.currentGear);
     public float MaxRpm => engineConfig != null && engineConfig.engine != null ? engineConfig.engine.maxRpm : 0.0f;
     public float IdleRpm => engineConfig != null && engineConfig.engine != null ? engineConfig.engine.idleRpm : 0.0f;
     public float EngineHorsepower => engineConfig != null ? engineConfig.horsepower : 0.0f;
     public int GroundedWheels => groundedWheels;
+    public int WheelCountValue => wheelBindings.Length;
     public bool IsGrounded => groundedWheels > 0 || timeSinceGrounded < coyoteTime;
+    public bool IsBodySleeping => customLinearVelocity.sqrMagnitude <= 0.0001f && customAngularVelocity.sqrMagnitude <= 0.0001f;
     public VehicleState CurrentState => CaptureState();
     public Transform CameraTarget => cameraTargetAnchor != null ? cameraTargetAnchor : transform;
+    public CarControlFrame LastAppliedControlFrame { get; private set; }
+    public event Action<BodyCollisionEvent> BodyCollisionResolved;
 
     public void ConfigureResolved(
         VehicleSettings handling,
@@ -215,6 +244,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         reboundDampingScale = tuning.reboundDampingScale;
         maxReboundForceRatio = tuning.maxReboundForceRatio;
         springStartToWheelCenterDistanceOverride = tuning.springStartToWheelCenterDistanceOverride;
+        bodyLiftOffset = tuning.bodyLiftOffset;
         centerOfMassOffsetY = tuning.centerOfMassOffsetY;
         maxAngularVelocity = tuning.maxAngularVelocity;
         wheelProbeRadiusScale = tuning.wheelProbeRadiusScale;
@@ -228,11 +258,14 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         airPitchTorque = tuning.airPitchTorque;
         airYawTorque = tuning.airYawTorque;
         airRollTorque = tuning.airRollTorque;
+        bodyCollisionRestitution = tuning.bodyCollisionRestitution;
+        dynamicBodyPushScale = tuning.dynamicBodyPushScale;
         collisionSkin = tuning.collisionSkin;
         maxSweepIterations = tuning.maxSweepIterations;
         maxDepenetrationIterations = tuning.maxDepenetrationIterations;
         disableLegacyCollisionShell = tuning.disableLegacyCollisionShell;
         useLocalInput = tuning.useLocalInput;
+        RefreshBodyLayoutOffsets();
     }
 
     public void PrimeSpawnPose()
@@ -327,6 +360,11 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         currentNitroInput = nitro;
     }
 
+    public void SetUseLocalInput(bool enabled)
+    {
+        useLocalInput = enabled;
+    }
+
     public void SetGear(int gear)
     {
         RequestShift(ref simulationState, gear);
@@ -355,6 +393,15 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
             Brake = currentInput.brake > 0.01f,
             Handbrake = currentInput.handbrake > 0.01f
         };
+        LastAppliedControlFrame = new CarControlFrame
+        {
+            Motor = inputs.Motor,
+            Steer = inputs.Steer,
+            Brake = inputs.Brake,
+            Handbrake = inputs.Handbrake,
+            Nitro = nitroInput
+        };
+        LastAppliedControlFrame.Clamp();
 
         ApplyAutoBrakeFromOppositeInput(ref inputs);
         UpdateNitro(nitroInput, inputs.Motor, deltaTime);
@@ -406,7 +453,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         ResolveBodyVisualRoot();
         ResolveCameraTargetAnchor();
         BindWheels();
-        RefreshBodyColliderShape();
+        RefreshBodyLayoutOffsets();
     }
 
     private void ResolveSteeringWheel()
@@ -428,15 +475,43 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private void ResolveBodyVisualRoot()
     {
-        if (bodyVisualRoot != null)
-            return;
-
-        bodyVisualRoot = FindNamedTransform("Body");
+        if (bodyVisualRoot == null)
+            bodyVisualRoot = FindNamedTransform("Body");
         if (bodyVisualRoot == null)
             return;
 
-        bodyVisualBaseLocalPosition = bodyVisualRoot.localPosition;
-        bodyVisualBaseLocalRotation = bodyVisualRoot.localRotation;
+        if (bodyVisualSourceRoot != bodyVisualRoot)
+        {
+            bodyVisualSourceRoot = bodyVisualRoot;
+            bodyVisualSourceLocalPosition = bodyVisualRoot.localPosition;
+            bodyVisualSourceLocalRotation = bodyVisualRoot.localRotation;
+        }
+
+        bodyVisualBaseLocalPosition = bodyVisualSourceLocalPosition + (Vector3.up * bodyLiftOffset);
+        bodyVisualBaseLocalRotation = bodyVisualSourceLocalRotation;
+    }
+
+    private void RefreshBodyLayoutOffsets()
+    {
+        ResolveBodyVisualRoot();
+        if (bodyVisualRoot != null)
+        {
+            bodyVisualRoot.localPosition = bodyVisualBaseLocalPosition;
+            bodyVisualRoot.localRotation = bodyVisualBaseLocalRotation;
+        }
+
+        if (bodyCollider != null)
+        {
+            if (bodyColliderSource != bodyCollider)
+            {
+                bodyColliderSource = bodyCollider;
+                bodyColliderSourceCenterLocal = bodyCollider.center;
+            }
+
+            bodyCollider.center = bodyColliderSourceCenterLocal + (Vector3.up * bodyLiftOffset);
+        }
+
+        RefreshBodyColliderShape();
     }
 
     private void ResolveCameraTargetAnchor()
