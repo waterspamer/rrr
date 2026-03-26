@@ -939,7 +939,7 @@ public sealed partial class ArcadePrototypeCarController
             Vector3 labelPosition = currentCenter + transform.right * (i % 2 == 0 ? -0.5f : 0.5f) + transform.up * 0.15f;
             DrawDebugLabel(
                 labelPosition,
-                $"{binding.name}\nspring {currentLength:0.###}\ncenterY {currentCenter.y:0.###}\ncontactY {contactPoint.y:0.###}");
+                $"{binding.name}\ncfg start->center {restLength:0.###}\nlive start->center {currentLength:0.###}\ncenterY {currentCenter.y:0.###}\ncontactY {contactPoint.y:0.###}");
 
             DrawDebugLabel(origin + transform.up * 0.08f, "spring start");
             DrawDebugLabel(currentCenter + transform.right * 0.08f, "wheel center");
