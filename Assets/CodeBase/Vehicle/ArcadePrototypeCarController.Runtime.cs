@@ -154,7 +154,7 @@ public sealed partial class ArcadePrototypeCarController
                 continue;
 
             WheelRuntimeState state = wheelStates[i];
-            float springForce = ApplySuspensionForce(state.contactPoint, state.suspensionLength);
+            float springForce = ApplySuspensionForce(binding, state.contactPoint, state.suspensionLength);
             state.springForce = springForce;
             wheelStates[i] = state;
 
@@ -165,16 +165,18 @@ public sealed partial class ArcadePrototypeCarController
             Vector3 pointVelocity = GetPointVelocityCustom(state.contactPoint);
             AdvanceWheelSpin(i, Mathf.Abs(Vector3.Dot(pointVelocity, wheelForward)), deltaTime);
         }
+
+        ApplyAntiRollForces();
     }
 
-    private float ApplySuspensionForce(Vector3 contactPoint, float springLength)
+    private float ApplySuspensionForce(WheelBinding binding, Vector3 contactPoint, float springLength)
     {
         float restLength = GetSuspensionRestLength();
         float compressionDistance = Mathf.Clamp(restLength - springLength, 0.0f, restLength);
         if (compressionDistance <= 0.0f)
             return 0.0f;
 
-        float sprungMass = body.mass / Mathf.Max(1, wheelBindings.Length);
+        float sprungMass = GetWheelSprungMass(binding);
         float springRate = CalculateSpringRate(sprungMass, suspensionConfig.suspensionFrequency);
         float damperRate = CalculateDamperRate(springRate, sprungMass, suspensionConfig.suspensionDamping);
         float suspensionVelocity = Vector3.Dot(GetPointVelocityCustom(contactPoint), -transform.up);
@@ -202,8 +204,8 @@ public sealed partial class ArcadePrototypeCarController
         float forwardVelocity = Vector3.Dot(contactVelocity, wheelForward);
         float sideVelocity = Vector3.Dot(contactVelocity, wheelRight);
 
-        float wheelMass = body.mass / Mathf.Max(1, wheelBindings.Length);
-        float normalLoad = Mathf.Max(1.0f, body.mass * Physics.gravity.magnitude / Mathf.Max(1, wheelBindings.Length));
+        float wheelMass = GetWheelSprungMass(binding);
+        float normalLoad = Mathf.Max(1.0f, wheelMass * Physics.gravity.magnitude);
         float loadFactor = Mathf.Clamp01(state.springForce / Mathf.Max(normalLoad * 2.5f, 1.0f));
         float gripBlend = groundedWheels > 0 ? landingGripBlend : 0.0f;
 
@@ -239,6 +241,37 @@ public sealed partial class ArcadePrototypeCarController
 
         Vector3 totalForce = (wheelForward * netLongitudinal) + (wheelRight * lateralForce);
         AddForceAtPosition(totalForce, state.contactPoint);
+    }
+
+    private void ApplyAntiRollForces()
+    {
+        if (suspensionConfig == null)
+            return;
+
+        ApplyAntiRollAxle(0, 1, suspensionConfig.antiRollFront);
+        ApplyAntiRollAxle(2, 3, suspensionConfig.antiRollRear);
+    }
+
+    private void ApplyAntiRollAxle(int leftIndex, int rightIndex, float antiRollForce)
+    {
+        if (antiRollForce <= 0.0f)
+            return;
+
+        if (leftIndex < 0 || leftIndex >= wheelStates.Length || rightIndex < 0 || rightIndex >= wheelStates.Length)
+            return;
+
+        WheelRuntimeState left = wheelStates[leftIndex];
+        WheelRuntimeState right = wheelStates[rightIndex];
+        float suspensionDistance = Mathf.Max(0.001f, GetSuspensionDistance());
+        float leftTravel = left.grounded ? Mathf.Clamp01(left.suspensionLength / suspensionDistance) : 1.0f;
+        float rightTravel = right.grounded ? Mathf.Clamp01(right.suspensionLength / suspensionDistance) : 1.0f;
+        float antiRoll = (leftTravel - rightTravel) * antiRollForce;
+
+        if (left.grounded)
+            AddForceAtPosition(transform.up * -antiRoll, left.contactPoint);
+
+        if (right.grounded)
+            AddForceAtPosition(transform.up * antiRoll, right.contactPoint);
     }
 
     private void ApplyChassisForces(VehicleInputs inputs, float deltaTime)
@@ -705,6 +738,16 @@ public sealed partial class ArcadePrototypeCarController
         }
 
         return Mathf.Max(1, count);
+    }
+
+    private float GetWheelSprungMass(WheelBinding binding)
+    {
+        float totalMass = Mathf.Max(50.0f, body != null ? body.mass : 1200.0f);
+        float frontBias = suspensionConfig != null ? Mathf.Clamp01(suspensionConfig.frontWeightBias) : 0.55f;
+        float frontMass = totalMass * frontBias;
+        float rearMass = totalMass - frontMass;
+        bool isFront = binding.steer;
+        return Mathf.Max(1.0f, (isFront ? frontMass : rearMass) * 0.5f);
     }
 
     private bool IsAnyWheelGrounded()
