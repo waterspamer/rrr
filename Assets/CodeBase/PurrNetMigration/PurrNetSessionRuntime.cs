@@ -52,17 +52,17 @@ public static class PurrNetSessionRuntime
         return resolved.IsEnabled;
     }
 
-    public static void ConfigureHost(string address = "127.0.0.1", ushort port = 5000, int tickRate = 30, int soloBotCount = 1)
+    public static void ConfigureHost(string address = "127.0.0.1", ushort port = 5000, int tickRate = 60, int soloBotCount = 1)
     {
         Configure(new PurrNetSessionSettings(PurrNetSessionMode.Host, address, port, tickRate, soloBotCount));
     }
 
-    public static void ConfigureClient(string address = "127.0.0.1", ushort port = 5000, int tickRate = 30)
+    public static void ConfigureClient(string address = "127.0.0.1", ushort port = 5000, int tickRate = 60)
     {
         Configure(new PurrNetSessionSettings(PurrNetSessionMode.Client, address, port, tickRate, 0));
     }
 
-    public static void ConfigureServer(string address = "0.0.0.0", ushort port = 5000, int tickRate = 30, int soloBotCount = 1)
+    public static void ConfigureServer(string address = "0.0.0.0", ushort port = 5000, int tickRate = 60, int soloBotCount = 1)
     {
         Configure(new PurrNetSessionSettings(PurrNetSessionMode.Server, address, port, tickRate, soloBotCount));
     }
@@ -70,7 +70,7 @@ public static class PurrNetSessionRuntime
     public static void Reset()
     {
         initialized = true;
-        settings = new PurrNetSessionSettings(PurrNetSessionMode.Disabled, "127.0.0.1", 5000, 30, 0);
+        settings = new PurrNetSessionSettings(PurrNetSessionMode.Disabled, "127.0.0.1", 5000, 60, 0);
     }
 
     public static void Configure(PurrNetSessionSettings configured)
@@ -93,7 +93,7 @@ public static class PurrNetSessionRuntime
         PurrNetSessionMode mode = PurrNetSessionMode.Disabled;
         string address = "127.0.0.1";
         ushort port = 5000;
-        int tickRate = 30;
+        int tickRate = 60;
         int soloBotCount = 1;
 
         if (TryGetArgValue(args, "-rrrNetMode", out string modeValue))

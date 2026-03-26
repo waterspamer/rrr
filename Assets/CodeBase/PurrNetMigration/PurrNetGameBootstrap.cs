@@ -301,12 +301,13 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         settings.hideFlags = HideFlags.HideAndDontSave;
         settings.name = "PurrVehicleRuntimeInterpolation";
         settings.useInterpolation = true;
-        settings.positionInterpolation.correctionRateMinMax = new Vector2(3.3f, 10.0f);
-        settings.positionInterpolation.correctionBlendMinMax = new Vector2(0.0f, 4.0f);
-        settings.positionInterpolation.teleportThresholdMinMax = new Vector2(0.025f, 5.0f);
-        settings.rotationInterpolation.correctionRateMinMax = new Vector2(3.3f, 10.0f);
-        settings.rotationInterpolation.correctionBlendMinMax = new Vector2(5.0f, 30.0f);
-        settings.rotationInterpolation.teleportThresholdMinMax = new Vector2(1.5f, 52.0f);
+        // Vehicle presentation tolerates a wider deadzone than characters; this avoids constant micro-corrections.
+        settings.positionInterpolation.correctionRateMinMax = new Vector2(4.5f, 12.0f);
+        settings.positionInterpolation.correctionBlendMinMax = new Vector2(0.0f, 3.2f);
+        settings.positionInterpolation.teleportThresholdMinMax = new Vector2(0.08f, 4.0f);
+        settings.rotationInterpolation.correctionRateMinMax = new Vector2(4.5f, 12.0f);
+        settings.rotationInterpolation.correctionBlendMinMax = new Vector2(4.0f, 24.0f);
+        settings.rotationInterpolation.teleportThresholdMinMax = new Vector2(2.5f, 45.0f);
         return settings;
     }
 

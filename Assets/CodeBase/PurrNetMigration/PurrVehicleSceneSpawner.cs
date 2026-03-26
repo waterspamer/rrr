@@ -412,6 +412,8 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
             groundProbeDistance,
             instance.transform);
         instance.transform.SetPositionAndRotation(groundedSpawnPosition, requestedSpawnRotation);
+        if (instance.TryGetComponent(out SafePredictedTransform predictedTransform))
+            predictedTransform.ResetInterpolation();
 
         NetworkVehicleEntity entity = instance.GetComponent<NetworkVehicleEntity>();
         if (entity == null)
@@ -724,6 +726,8 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
             groundProbeDistance,
             instance.transform);
         instance.transform.SetPositionAndRotation(groundedSpawnPosition, instance.transform.rotation);
+        if (instance.TryGetComponent(out SafePredictedTransform predictedTransform))
+            predictedTransform.ResetInterpolation();
     }
 
     private bool TryResolveLoadoutPayload(PlayerID player, out PlayerCarSelectionPayload payload)

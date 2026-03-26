@@ -313,7 +313,7 @@ public abstract partial class CarControllerBase : MonoBehaviour
 
         ApplyAutoBrakeFromOppositeInput(ref inputs, rb);
         ApplyDriveType();
-        UpdateNitro(controlFrame.Nitro, inputs.Motor);
+        UpdateNitro(controlFrame.Nitro, inputs.Motor, deltaTime);
         UpdatePowertrain(inputs, deltaTime);
         UpdateSteering(inputs, deltaTime);
         UpdateDriftKick(inputs, deltaTime);
@@ -682,7 +682,7 @@ public abstract partial class CarControllerBase : MonoBehaviour
         nitroInitialized = true;
     }
 
-    private void UpdateNitro(bool input, float motorInput)
+    private void UpdateNitro(bool input, float motorInput, float deltaTime)
     {
         if (!nitroEnabled)
         {
@@ -694,7 +694,7 @@ public abstract partial class CarControllerBase : MonoBehaviour
         SetNitroActive(wantsNitro && nitroAmount > 0.001f);
 
         float delta = nitroActive ? -nitroDrainPerSecond : nitroRegenPerSecond;
-        nitroAmount = Mathf.Clamp01(nitroAmount + delta * Time.fixedDeltaTime);
+        nitroAmount = Mathf.Clamp01(nitroAmount + delta * Mathf.Max(0.0f, deltaTime));
     }
 
     private void InitializeNitroVfx()
