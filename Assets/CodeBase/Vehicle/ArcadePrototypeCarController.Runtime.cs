@@ -36,10 +36,11 @@ public sealed partial class ArcadePrototypeCarController
 
         if (handlingConfig != null)
             body.mass = Mathf.Max(50.0f, handlingConfig.mass);
+        RefreshBodyColliderShape();
         float centerOfMassY = centerOfMassOffsetY;
         if (suspensionConfig != null)
             centerOfMassY += suspensionConfig.centerOfMassHeight;
-        body.centerOfMass = new Vector3(0.0f, centerOfMassY, 0.0f);
+        body.centerOfMass = bodyColliderCenterLocal + new Vector3(0.0f, centerOfMassY, 0.0f);
 
         body.interpolation = RigidbodyInterpolation.None;
         body.maxAngularVelocity = maxAngularVelocity;
@@ -47,7 +48,6 @@ public sealed partial class ArcadePrototypeCarController
         body.useGravity = false;
         body.detectCollisions = true;
         body.constraints = RigidbodyConstraints.None;
-        RefreshBodyColliderShape();
         SyncCustomBodyState(false);
     }
 
@@ -685,6 +685,57 @@ public sealed partial class ArcadePrototypeCarController
         Quaternion interpolatedRotation = Quaternion.Slerp(previousSimulationRotation, currentSimulationRotation, alpha);
         cameraTargetAnchor.localPosition = transform.InverseTransformPoint(interpolatedPosition);
         cameraTargetAnchor.localRotation = Quaternion.Inverse(transform.rotation) * interpolatedRotation;
+    }
+
+    private void RestoreVisualHierarchyToSimulationPose()
+    {
+        if (bodyVisualRoot != null)
+        {
+            bodyVisualRoot.localPosition = bodyVisualBaseLocalPosition;
+            bodyVisualRoot.localRotation = bodyVisualBaseLocalRotation;
+        }
+
+        for (int i = 0; i < wheelBindings.Length; i++)
+        {
+            WheelBinding binding = wheelBindings[i];
+            if (binding.hardpoint == null)
+                continue;
+
+            binding.hardpoint.localPosition = binding.baseHardpointLocalPosition;
+            binding.hardpoint.localRotation = binding.baseHardpointLocalRotation;
+        }
+    }
+
+    private void ApplyRenderInterpolation()
+    {
+        if (!renderPoseInitialized)
+            return;
+
+        float delta = Mathf.Max(0.0001f, lastSimulationDeltaTime);
+        float alpha = Mathf.Clamp01((Time.time - lastSimulationTime) / delta);
+        Vector3 interpolatedPosition = Vector3.Lerp(previousSimulationPosition, currentSimulationPosition, alpha);
+        Quaternion interpolatedRotation = Quaternion.Slerp(previousSimulationRotation, currentSimulationRotation, alpha);
+        Quaternion inverseCurrentRotation = Quaternion.Inverse(transform.rotation);
+
+        if (bodyVisualRoot != null)
+        {
+            Vector3 bodyWorldPosition = interpolatedPosition + (interpolatedRotation * bodyVisualBaseLocalPosition);
+            Quaternion bodyWorldRotation = interpolatedRotation * bodyVisualBaseLocalRotation;
+            bodyVisualRoot.localPosition = transform.InverseTransformPoint(bodyWorldPosition);
+            bodyVisualRoot.localRotation = inverseCurrentRotation * bodyWorldRotation;
+        }
+
+        for (int i = 0; i < wheelBindings.Length; i++)
+        {
+            WheelBinding binding = wheelBindings[i];
+            if (binding.hardpoint == null)
+                continue;
+
+            Vector3 hardpointWorldPosition = interpolatedPosition + (interpolatedRotation * binding.baseHardpointLocalPosition);
+            Quaternion hardpointWorldRotation = interpolatedRotation * binding.baseHardpointLocalRotation;
+            binding.hardpoint.localPosition = transform.InverseTransformPoint(hardpointWorldPosition);
+            binding.hardpoint.localRotation = inverseCurrentRotation * hardpointWorldRotation;
+        }
     }
 
     private void UpdateWheelVisuals(float deltaTime)

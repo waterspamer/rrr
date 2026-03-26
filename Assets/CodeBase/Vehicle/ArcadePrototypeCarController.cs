@@ -49,6 +49,8 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         public bool drive;
         public bool steer;
         public bool handbrake;
+        public Vector3 baseHardpointLocalPosition;
+        public Quaternion baseHardpointLocalRotation;
         public Quaternion baseVisualRotation;
     }
 
@@ -120,8 +122,11 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     private readonly Collider[] overlapHits = new Collider[16];
 
     private SimulationState simulationState;
+    private Transform bodyVisualRoot;
     private Transform steeringWheel;
     private Transform cameraTargetAnchor;
+    private Vector3 bodyVisualBaseLocalPosition;
+    private Quaternion bodyVisualBaseLocalRotation = Quaternion.identity;
     private Quaternion steeringWheelBaseRotation = Quaternion.identity;
     private BoxCollider bodyCollider;
     private Vector3 bodyColliderCenterLocal;
@@ -292,6 +297,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private void LateUpdate()
     {
+        ApplyRenderInterpolation();
         UpdateCameraTargetAnchor();
         UpdateWheelVisuals(Time.deltaTime);
         UpdateSteeringWheelVisual(Time.deltaTime);
@@ -337,6 +343,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         if (deltaTime <= 0.0f)
             return;
 
+        RestoreVisualHierarchyToSimulationPose();
         currentInput = SanitizeInput(input);
 
         VehicleInputs inputs = new VehicleInputs
@@ -394,6 +401,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         }
 
         ResolveSteeringWheel();
+        ResolveBodyVisualRoot();
         ResolveCameraTargetAnchor();
         BindWheels();
         RefreshBodyColliderShape();
@@ -414,6 +422,19 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
             steeringWheelBaseRotation = steeringWheel.localRotation;
             return;
         }
+    }
+
+    private void ResolveBodyVisualRoot()
+    {
+        if (bodyVisualRoot != null)
+            return;
+
+        bodyVisualRoot = FindNamedTransform("Body");
+        if (bodyVisualRoot == null)
+            return;
+
+        bodyVisualBaseLocalPosition = bodyVisualRoot.localPosition;
+        bodyVisualBaseLocalRotation = bodyVisualRoot.localRotation;
     }
 
     private void ResolveCameraTargetAnchor()
@@ -464,6 +485,8 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
             drive = drive,
             steer = steer,
             handbrake = handbrake,
+            baseHardpointLocalPosition = hardpoint != null ? hardpoint.localPosition : Vector3.zero,
+            baseHardpointLocalRotation = hardpoint != null ? hardpoint.localRotation : Quaternion.identity,
             baseVisualRotation = ResolveBaseVisualRotation(visualRoot)
         };
     }
@@ -538,8 +561,16 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
     private void ResetPresentationBaseline()
     {
+        ResolveBodyVisualRoot();
         ResolveSteeringWheel();
         ResolveCameraTargetAnchor();
+        if (bodyVisualRoot != null)
+        {
+            bodyVisualBaseLocalPosition = bodyVisualRoot.localPosition;
+            bodyVisualBaseLocalRotation = bodyVisualRoot.localRotation;
+            bodyVisualRoot.localPosition = bodyVisualBaseLocalPosition;
+            bodyVisualRoot.localRotation = bodyVisualBaseLocalRotation;
+        }
         if (steeringWheel != null)
             steeringWheel.localRotation = steeringWheelBaseRotation;
         if (cameraTargetAnchor != null)
@@ -554,6 +585,13 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
             if (binding.visualRoot == null)
                 continue;
 
+            if (binding.hardpoint != null)
+            {
+                binding.baseHardpointLocalPosition = binding.hardpoint.localPosition;
+                binding.baseHardpointLocalRotation = binding.hardpoint.localRotation;
+                binding.hardpoint.localPosition = binding.baseHardpointLocalPosition;
+                binding.hardpoint.localRotation = binding.baseHardpointLocalRotation;
+            }
             binding.baseVisualRotation = ResolveBaseVisualRotation(binding.visualRoot);
             binding.visualRoot.localPosition = Vector3.down * GetSuspensionRestLength();
             binding.visualRoot.localRotation = binding.baseVisualRotation;
