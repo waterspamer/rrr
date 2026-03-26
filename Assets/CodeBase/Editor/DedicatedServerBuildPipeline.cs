@@ -19,7 +19,7 @@ public static class DedicatedServerBuildPipeline
     private const string DedicatedTargetArg = "-rrrDedicatedTarget";
     private const string DefaultPurrNetBindAddress = "0.0.0.0";
     private const string DefaultPurrNetPort = "5000";
-    private const string DefaultPurrNetTickRate = "60";
+    private const string DefaultPurrNetTickRate = "30";
     private const string DefaultPurrNetSoloBots = "1";
     private const string DefaultPurrNetAutoCloseSoloSession = "1";
     private const string DefaultPurrNetSoloIdleTimeoutSec = "30";

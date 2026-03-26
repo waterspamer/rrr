@@ -43,7 +43,7 @@ public class GarageMenuController : MonoBehaviour
     [Header("PurrNet Solo")]
     [SerializeField] private string purrNetSoloHost = "93.183.80.30";
     [SerializeField, Min(1024)] private int purrNetSoloPort = 5000;
-    [SerializeField, Range(10, 120)] private int purrNetSoloTickRate = 60;
+    [SerializeField, Range(10, 120)] private int purrNetSoloTickRate = 30;
 
     private readonly List<string> bodySetOptionNames = new List<string>();
     private readonly List<CustomizationSelectorState> rawSelectorStates = new List<CustomizationSelectorState>();
@@ -2067,7 +2067,7 @@ public class GarageMenuController : MonoBehaviour
             }
 
             ushort port = (ushort)Mathf.Clamp(purrNetSoloPort, 1024, 65535);
-            int tickRate = Mathf.Clamp(Mathf.Max(60, purrNetSoloTickRate), 10, 120);
+            int tickRate = Mathf.Clamp(purrNetSoloTickRate, 10, 120);
             string host = string.IsNullOrWhiteSpace(purrNetSoloHost) ? "93.183.80.30" : purrNetSoloHost.Trim();
             host = await ResolvePurrNetHostAsync(host);
             PurrNetSessionRuntime.ConfigureClient(host, port, tickRate);
