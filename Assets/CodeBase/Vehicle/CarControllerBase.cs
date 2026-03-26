@@ -191,6 +191,7 @@ public abstract partial class CarControllerBase : MonoBehaviour
     public bool IsRigidBodySleeping => rb != null && rb.IsSleeping();
     public int GroundedWheelCount => CountGroundedWheels();
     public bool ManualSimulationEnabled { get; private set; }
+    public bool ExternalPresentationEnabled { get; private set; }
 
     protected virtual void Awake()
     {
@@ -246,6 +247,11 @@ public abstract partial class CarControllerBase : MonoBehaviour
     public void SetManualSimulationEnabled(bool enabled)
     {
         ManualSimulationEnabled = enabled;
+    }
+
+    public void SetExternalPresentationEnabled(bool enabled)
+    {
+        ExternalPresentationEnabled = enabled;
     }
 
     public CarControllerSimulationState CaptureSimulationState()
@@ -376,9 +382,41 @@ public abstract partial class CarControllerBase : MonoBehaviour
 
     protected virtual void LateUpdate()
     {
+        if (ExternalPresentationEnabled)
+            return;
+
+        UpdateVehiclePresentation(transform, Time.deltaTime);
+    }
+
+    public void UpdateVehiclePresentation(Transform presentationRoot, float deltaTime)
+    {
+        Transform authoritativeRoot = transform;
+        if (authoritativeRoot == null)
+            return;
+
+        if (presentationRoot == null)
+            presentationRoot = authoritativeRoot;
+
+        Quaternion authoritativeRootRotation = authoritativeRoot.rotation;
+        Vector3 authoritativeRootPosition = authoritativeRoot.position;
+        Vector3 presentationLocalPosition = authoritativeRoot.InverseTransformPoint(presentationRoot.position);
+        Quaternion presentationLocalRotation = Quaternion.Inverse(authoritativeRootRotation) * presentationRoot.rotation;
+        Quaternion presentationVehicleRotation = presentationRoot.rotation * Quaternion.Inverse(presentationLocalRotation);
+        Vector3 presentationVehiclePosition =
+            presentationRoot.position - (presentationVehicleRotation * presentationLocalPosition);
+
         for (int i = 0; i < wheels.Count; i++)
-            UpdateWheelVisual(wheels[i]);
-        UpdateSteeringWheelVisual(Time.deltaTime);
+        {
+            UpdateWheelVisual(
+                wheels[i],
+                authoritativeRootPosition,
+                authoritativeRootRotation,
+                presentationVehiclePosition,
+                presentationVehicleRotation,
+                deltaTime);
+        }
+
+        UpdateSteeringWheelVisual(deltaTime);
     }
 
     private void OnDrawGizmos()
@@ -564,15 +602,23 @@ public abstract partial class CarControllerBase : MonoBehaviour
         }
     }
 
-    protected virtual void UpdateWheelVisual(Wheel wheel)
+    protected virtual void UpdateWheelVisual(
+        Wheel wheel,
+        Vector3 authoritativeRootPosition,
+        Quaternion authoritativeRootRotation,
+        Vector3 presentationVehiclePosition,
+        Quaternion presentationVehicleRotation,
+        float deltaTime)
     {
         if (wheel.Visual == null)
             return;
 
         wheel.Collider.GetWorldPose(out Vector3 pos, out Quaternion rot);
-        wheel.Visual.position = pos;
-        Quaternion targetRot = rot * Quaternion.Euler(0.0f, 0.0f, 90.0f);
-        float t = 1.0f - Mathf.Exp(-wheelVisualRotationSpeed * Time.deltaTime);
+        Vector3 localWheelPosition = Quaternion.Inverse(authoritativeRootRotation) * (pos - authoritativeRootPosition);
+        Quaternion localWheelRotation = Quaternion.Inverse(authoritativeRootRotation) * rot;
+        wheel.Visual.position = presentationVehiclePosition + (presentationVehicleRotation * localWheelPosition);
+        Quaternion targetRot = presentationVehicleRotation * localWheelRotation * Quaternion.Euler(0.0f, 0.0f, 90.0f);
+        float t = 1.0f - Mathf.Exp(-wheelVisualRotationSpeed * deltaTime);
         wheel.Visual.rotation = Quaternion.Slerp(wheel.Visual.rotation, targetRot, t);
     }
 

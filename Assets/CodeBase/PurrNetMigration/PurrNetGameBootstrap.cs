@@ -281,7 +281,6 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         GetOrAddComponent<PurrVehicleLocalInputProvider>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehicleBotInputProvider>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehiclePredictedController>(runtimeTemplateObject);
-        GetOrAddComponent<PurrVehicleWheelPresentation>(runtimeTemplateObject);
         GetOrAddComponent<PurrVehicleWorldSpaceStatusUi>(runtimeTemplateObject);
 
         SafePredictedTransform predictedTransform = GetOrAddComponent<SafePredictedTransform>(runtimeTemplateObject);
