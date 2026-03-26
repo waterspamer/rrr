@@ -16,6 +16,7 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
     [Min(0.1f)] public float compressionDampingScale = 1.0f;
     [Min(0.1f)] public float reboundDampingScale = 1.85f;
     [Range(0.0f, 1.0f)] public float maxReboundForceRatio = 0.45f;
+    public float springStartToWheelCenterDistanceOverride = -1.0f;
     public float centerOfMassOffsetY = -0.45f;
     [Min(1.0f)] public float maxAngularVelocity = 10.0f;
     [Range(0.2f, 1.0f)] public float wheelProbeRadiusScale = 0.86f;
@@ -51,6 +52,8 @@ public sealed class ArcadePrototypeControllerRuntimeTuning
         compressionDampingScale = Mathf.Max(0.1f, compressionDampingScale);
         reboundDampingScale = Mathf.Max(0.1f, reboundDampingScale);
         maxReboundForceRatio = Mathf.Clamp01(maxReboundForceRatio);
+        if (springStartToWheelCenterDistanceOverride > 0.0f)
+            springStartToWheelCenterDistanceOverride = Mathf.Clamp(springStartToWheelCenterDistanceOverride, 0.02f, 1.0f);
         maxAngularVelocity = Mathf.Max(1.0f, maxAngularVelocity);
         wheelProbeRadiusScale = Mathf.Clamp(wheelProbeRadiusScale, 0.2f, 1.0f);
         uprightAssist = Mathf.Max(0.0f, uprightAssist);
@@ -472,6 +475,7 @@ public sealed class ArcadePrototypeSceneTuning : MonoBehaviour
             compressionDampingScale = controller.compressionDampingScale,
             reboundDampingScale = controller.reboundDampingScale,
             maxReboundForceRatio = controller.maxReboundForceRatio,
+            springStartToWheelCenterDistanceOverride = controller.springStartToWheelCenterDistanceOverride,
             centerOfMassOffsetY = controller.centerOfMassOffsetY,
             maxAngularVelocity = controller.maxAngularVelocity,
             wheelProbeRadiusScale = controller.wheelProbeRadiusScale,

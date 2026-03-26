@@ -22,6 +22,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         PlayerCarConfig carConfig,
         VehicleSettings handling,
         SuspensionConfig suspension,
+        ArcadePrototypeControllerRuntimeTuning controllerTuning,
         BodySetConfig bodySet,
         IReadOnlyList<CarCustomizationSelection> customizations,
         Color paint,
@@ -35,7 +36,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
 
         visual.Validate();
         Transform bodyRoot = BuildBody(visual, handling, suspension, bodySet, customizations);
-        BuildWheels(visual, handling, suspension);
+        BuildWheels(visual, handling, suspension, controllerTuning);
         RebuildBodyCollider(visual, handling, suspension);
 
         if (applyPaint)
@@ -50,7 +51,7 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         Color paint,
         bool applyPaint)
     {
-        Build(carConfig, null, suspension, bodySet, customizations, paint, applyPaint);
+        Build(carConfig, null, suspension, null, bodySet, customizations, paint, applyPaint);
     }
 
     private void ClearGeneratedRig()
@@ -135,10 +136,10 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         return bodyInstance.transform;
     }
 
-    private void BuildWheels(PlayerCarVisualSettings visual, VehicleSettings handling, SuspensionConfig suspension)
+    private void BuildWheels(PlayerCarVisualSettings visual, VehicleSettings handling, SuspensionConfig suspension, ArcadePrototypeControllerRuntimeTuning controllerTuning)
     {
         float wheelHeight = ResolveWheelCenterHeight(visual, handling, suspension);
-        float restLength = ResolveRestLength(suspension);
+        float restLength = ResolveRestLength(suspension, controllerTuning);
         float wheelRadius = ResolveWheelRadius(visual, handling);
         float wheelWidth = ResolveWheelWidth(handling);
 
@@ -287,8 +288,11 @@ public sealed class ArcadePrototypeRigBuilder : MonoBehaviour
         return handling != null ? Mathf.Clamp(handling.wheelWidth, 0.05f, 1.0f) : 0.22f;
     }
 
-    private static float ResolveRestLength(SuspensionConfig suspension)
+    private static float ResolveRestLength(SuspensionConfig suspension, ArcadePrototypeControllerRuntimeTuning controllerTuning)
     {
+        if (controllerTuning != null && controllerTuning.springStartToWheelCenterDistanceOverride > 0.0f)
+            return Mathf.Clamp(controllerTuning.springStartToWheelCenterDistanceOverride, 0.02f, 1.0f);
+
         if (suspension == null)
             return 0.1f;
 
@@ -389,6 +393,7 @@ public sealed class ArcadePrototypeSceneBootstrap : MonoBehaviour
             resolved.carConfig,
             resolved.handling,
             resolved.suspension,
+            resolved.controllerTuning,
             resolved.bodySet,
             resolved.customizations,
             resolved.paint,

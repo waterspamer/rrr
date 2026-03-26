@@ -87,6 +87,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
     [SerializeField, Min(0.1f)] private float compressionDampingScale = 1.0f;
     [SerializeField, Min(0.1f)] private float reboundDampingScale = 1.85f;
     [SerializeField, Range(0.0f, 1.0f)] private float maxReboundForceRatio = 0.45f;
+    [SerializeField] private float springStartToWheelCenterDistanceOverride = -1.0f;
     [SerializeField] private float centerOfMassOffsetY = -0.45f;
     [SerializeField, Min(1.0f)] private float maxAngularVelocity = 10.0f;
     [SerializeField, Range(0.2f, 1.0f)] private float wheelProbeRadiusScale = 0.86f;
@@ -213,6 +214,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
         compressionDampingScale = tuning.compressionDampingScale;
         reboundDampingScale = tuning.reboundDampingScale;
         maxReboundForceRatio = tuning.maxReboundForceRatio;
+        springStartToWheelCenterDistanceOverride = tuning.springStartToWheelCenterDistanceOverride;
         centerOfMassOffsetY = tuning.centerOfMassOffsetY;
         maxAngularVelocity = tuning.maxAngularVelocity;
         wheelProbeRadiusScale = tuning.wheelProbeRadiusScale;

@@ -822,6 +822,9 @@ public sealed partial class ArcadePrototypeCarController
 
     private float GetSuspensionRestLength()
     {
+        if (springStartToWheelCenterDistanceOverride > 0.0f)
+            return Mathf.Clamp(springStartToWheelCenterDistanceOverride, 0.02f, Mathf.Max(0.02f, GetSuspensionDistance()));
+
         float distance = GetSuspensionDistance();
         float targetPosition = suspensionConfig != null ? Mathf.Clamp01(suspensionConfig.suspensionTargetPosition) : 0.5f;
         return Mathf.Clamp(distance * (1.0f - targetPosition), 0.02f, distance);
