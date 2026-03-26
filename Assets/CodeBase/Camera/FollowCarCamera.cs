@@ -113,6 +113,9 @@ public class FollowCarCamera : MonoBehaviour
     private RectTransform reticleRoot;
     private Vector3 smoothedOrbitPosition;
     private Quaternion smoothedLookRotation;
+    private Vector3 smoothedTargetPivot;
+    private Vector3 smoothedTargetPivotVelocity;
+    private bool hasSmoothedTargetPivot;
     private Vector3 shakeLocalPosition;
     private Vector3 shakeLocalRotation;
     private Tween positionShakeTween;
@@ -148,6 +151,11 @@ public class FollowCarCamera : MonoBehaviour
         lastManualLookTime = Time.time;
         smoothedOrbitPosition = transform.position;
         smoothedLookRotation = transform.rotation;
+        if (target != null)
+        {
+            smoothedTargetPivot = target.TransformPoint(pivotOffset);
+            hasSmoothedTargetPivot = true;
+        }
         UpdateCursorState(force: true);
     }
 
@@ -185,6 +193,8 @@ public class FollowCarCamera : MonoBehaviour
         }
         if (aimHeightOffset > 0.0f)
             pivot += target.up * (aimHeightOffset * aimBlend);
+
+        pivot = GetEffectivePivot(pivot);
 
         if (!aiming)
         {
@@ -253,6 +263,46 @@ public class FollowCarCamera : MonoBehaviour
     public void SetTarget(Transform newTarget)
     {
         target = newTarget;
+        if (target != null)
+        {
+            smoothedTargetPivot = target.TransformPoint(pivotOffset);
+            smoothedTargetPivotVelocity = Vector3.zero;
+            hasSmoothedTargetPivot = true;
+        }
+        else
+        {
+            smoothedTargetPivotVelocity = Vector3.zero;
+            hasSmoothedTargetPivot = false;
+        }
+    }
+
+    private Vector3 GetEffectivePivot(Vector3 rawPivot)
+    {
+        if (!UsesPrototypeTargetSmoothing())
+        {
+            smoothedTargetPivot = rawPivot;
+            smoothedTargetPivotVelocity = Vector3.zero;
+            hasSmoothedTargetPivot = true;
+            return rawPivot;
+        }
+
+        if (!hasSmoothedTargetPivot)
+        {
+            smoothedTargetPivot = rawPivot;
+            hasSmoothedTargetPivot = true;
+            return rawPivot;
+        }
+
+        smoothedTargetPivot = Vector3.SmoothDamp(smoothedTargetPivot, rawPivot, ref smoothedTargetPivotVelocity, 0.045f);
+        return smoothedTargetPivot;
+    }
+
+    private bool UsesPrototypeTargetSmoothing()
+    {
+        if (target == null)
+            return false;
+
+        return target.GetComponentInParent<ArcadePrototypeCarController>() != null;
     }
 
     private void UpdateOrbitInput()
