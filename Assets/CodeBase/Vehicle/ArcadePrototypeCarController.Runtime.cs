@@ -822,12 +822,17 @@ public sealed partial class ArcadePrototypeCarController
 
     private float GetSuspensionRestLength()
     {
-        if (springStartToWheelCenterDistanceOverride > 0.0f)
-            return Mathf.Clamp(springStartToWheelCenterDistanceOverride, 0.02f, Mathf.Max(0.02f, GetSuspensionDistance()));
-
         float distance = GetSuspensionDistance();
         float targetPosition = suspensionConfig != null ? Mathf.Clamp01(suspensionConfig.suspensionTargetPosition) : 0.5f;
         return Mathf.Clamp(distance * (1.0f - targetPosition), 0.02f, distance);
+    }
+
+    private float GetConfiguredSpringStartToWheelCenterDistance()
+    {
+        if (springStartToWheelCenterDistanceOverride > 0.0f)
+            return Mathf.Clamp(springStartToWheelCenterDistanceOverride, 0.02f, 1.0f);
+
+        return GetSuspensionRestLength();
     }
 
     private static float CalculateSpringRate(float sprungMass, float frequency)
@@ -878,6 +883,7 @@ public sealed partial class ArcadePrototypeCarController
         float wheelRadius = GetWheelRadius();
         float suspensionDistance = GetSuspensionDistance();
         float restLength = GetSuspensionRestLength();
+        float configuredCenterDistance = GetConfiguredSpringStartToWheelCenterDistance();
         float targetPosition = suspensionConfig != null ? Mathf.Clamp01(suspensionConfig.suspensionTargetPosition) : 0.5f;
 
         if (bodyCollider != null)
@@ -903,7 +909,7 @@ public sealed partial class ArcadePrototypeCarController
             Vector3 configLabelPosition = GetBodyCenter(transform.position, transform.rotation) + transform.up * (bodyColliderHalfExtents.y + 0.7f);
             DrawDebugLabel(
                 configLabelPosition,
-                $"radius {wheelRadius:0.###}\ntravel {suspensionDistance:0.###}\nrest {restLength:0.###}\ntarget {targetPosition:0.##}");
+                $"radius {wheelRadius:0.###}\ntravel {suspensionDistance:0.###}\nphys rest {restLength:0.###}\nlayout {configuredCenterDistance:0.###}\ntarget {targetPosition:0.##}");
 #endif
         }
 
@@ -942,7 +948,7 @@ public sealed partial class ArcadePrototypeCarController
             Vector3 labelPosition = currentCenter + transform.right * (i % 2 == 0 ? -0.5f : 0.5f) + transform.up * 0.15f;
             DrawDebugLabel(
                 labelPosition,
-                $"{binding.name}\ncfg start->center {restLength:0.###}\nlive start->center {currentLength:0.###}\ncenterY {currentCenter.y:0.###}\ncontactY {contactPoint.y:0.###}");
+                $"{binding.name}\nlayout start->center {configuredCenterDistance:0.###}\nphys rest {restLength:0.###}\nlive start->center {currentLength:0.###}\ncenterY {currentCenter.y:0.###}\ncontactY {contactPoint.y:0.###}");
 
             DrawDebugLabel(origin + transform.up * 0.08f, "spring start");
             DrawDebugLabel(currentCenter + transform.right * 0.08f, "wheel center");

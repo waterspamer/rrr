@@ -256,7 +256,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
 
         if (VehicleSpawnUtility.TryGetGroundHeight(transform.position, 2.0f, 8.0f, out float groundY, transform))
         {
-            float desiredSpringLength = GetSuspensionRestLength();
+            float desiredSpringLength = GetConfiguredSpringStartToWheelCenterDistance();
             Vector3 position = body != null ? body.position : transform.position;
             position.y = groundY + GetWheelRadius() + desiredSpringLength - lowestHardpointY;
             if (body != null)
@@ -595,7 +595,7 @@ public sealed partial class ArcadePrototypeCarController : MonoBehaviour
                 binding.hardpoint.localRotation = binding.baseHardpointLocalRotation;
             }
             binding.baseVisualRotation = ResolveBaseVisualRotation(binding.visualRoot);
-            binding.visualRoot.localPosition = Vector3.down * GetSuspensionRestLength();
+            binding.visualRoot.localPosition = Vector3.down * GetConfiguredSpringStartToWheelCenterDistance();
             binding.visualRoot.localRotation = binding.baseVisualRotation;
             wheelBindings[i] = binding;
         }
