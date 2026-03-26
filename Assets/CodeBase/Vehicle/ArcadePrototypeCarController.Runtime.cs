@@ -911,38 +911,39 @@ public sealed partial class ArcadePrototypeCarController
                 continue;
 
             Vector3 origin = binding.hardpoint.position;
-            float rayDistance = suspensionDistance + wheelRadius + suspensionRayExtraDistance;
-            float probeRadius = Mathf.Min(wheelRadius * wheelProbeRadiusScale, wheelRadius * 0.98f);
             float currentLength = wheelStates[i].grounded ? wheelStates[i].suspensionLength : suspensionDistance;
-            Vector3 restCenter = origin - transform.up * restLength;
-            Vector3 fullDropCenter = origin - transform.up * suspensionDistance;
             Vector3 currentCenter = origin - transform.up * currentLength;
-            float visualCenterHeight = binding.baseHardpointLocalPosition.y - restLength;
+            Vector3 contactPoint = wheelStates[i].grounded
+                ? wheelStates[i].contactPoint
+                : currentCenter - transform.up * wheelRadius;
 
-            Gizmos.color = new Color(0.25f, 0.85f, 1.0f, 0.9f);
-            Gizmos.DrawLine(origin, restCenter);
-            Gizmos.DrawWireSphere(restCenter, wheelRadius);
+            Gizmos.color = new Color(1.0f, 0.85f, 0.15f, 0.95f);
+            Gizmos.DrawSphere(origin, 0.04f);
 
-            Gizmos.color = new Color(0.2f, 0.35f, 1.0f, 0.7f);
-            Gizmos.DrawLine(restCenter, fullDropCenter);
-            Gizmos.DrawWireSphere(fullDropCenter, wheelRadius);
+            Gizmos.color = new Color(0.25f, 0.85f, 1.0f, 0.95f);
+            Gizmos.DrawSphere(currentCenter, 0.045f);
+            Gizmos.DrawWireSphere(currentCenter, wheelRadius);
 
             Gizmos.color = wheelStates[i].grounded ? Color.green : Color.red;
-            Gizmos.DrawLine(origin, origin - transform.up * rayDistance);
-            Gizmos.DrawWireSphere(origin, 0.03f);
-            Gizmos.DrawWireSphere(origin - transform.up * rayDistance, probeRadius);
-            Gizmos.DrawWireSphere(currentCenter, wheelRadius);
+            Gizmos.DrawSphere(contactPoint, 0.04f);
             if (wheelStates[i].grounded)
-            {
-                Gizmos.DrawSphere(wheelStates[i].contactPoint, 0.05f);
-                Gizmos.DrawRay(wheelStates[i].contactPoint, wheelStates[i].contactNormal * 0.4f);
-            }
+                Gizmos.DrawRay(contactPoint, wheelStates[i].contactNormal * 0.25f);
+
+            Gizmos.color = new Color(1.0f, 0.55f, 0.9f, 0.9f);
+            Gizmos.DrawLine(origin, currentCenter);
+
+            Gizmos.color = new Color(1.0f, 1.0f, 1.0f, 0.75f);
+            Gizmos.DrawLine(currentCenter, contactPoint);
 
 #if UNITY_EDITOR
-            Vector3 labelPosition = currentCenter + transform.right * (i % 2 == 0 ? -0.45f : 0.45f) + transform.up * 0.2f;
+            Vector3 labelPosition = currentCenter + transform.right * (i % 2 == 0 ? -0.5f : 0.5f) + transform.up * 0.15f;
             DrawDebugLabel(
                 labelPosition,
-                $"{binding.name}\nvisualY {visualCenterHeight:0.###}\ncur {currentLength:0.###}\nrest {restLength:0.###}\nr {wheelRadius:0.###}");
+                $"{binding.name}\nspring {currentLength:0.###}\ncenterY {currentCenter.y:0.###}\ncontactY {contactPoint.y:0.###}");
+
+            DrawDebugLabel(origin + transform.up * 0.08f, "spring start");
+            DrawDebugLabel(currentCenter + transform.right * 0.08f, "wheel center");
+            DrawDebugLabel(contactPoint - transform.up * 0.08f, wheelStates[i].grounded ? "ground contact" : "no contact");
 #endif
         }
     }
