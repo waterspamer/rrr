@@ -67,6 +67,7 @@ MonoBehaviour:
     maxDepenetrationIterations: 4
     disableLegacyCollisionShell: 1
     useLocalInput: 1
+  directMultiplayerSimulationBackend: 1
   damage:
     damageTexture: {fileID: 0}
     targetRenderer: {fileID: 0}
