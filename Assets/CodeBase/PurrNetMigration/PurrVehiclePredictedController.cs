@@ -238,7 +238,6 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         damageController?.ResetDamageState(notifyNetwork: false);
         lastAppliedDamageRevision = int.MinValue;
         RefreshPredictionView();
-        predictedTransform?.ResetInterpolation();
         lastAppliedLocalLoadoutSignature = signature;
         Debug.Log($"PurrVehiclePredictedController: applied local owner loadout '{payload.loadoutName}'.", this);
     }
