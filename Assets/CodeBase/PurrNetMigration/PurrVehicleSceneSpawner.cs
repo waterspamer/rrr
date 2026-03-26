@@ -700,6 +700,8 @@ public sealed class PurrVehicleSceneSpawner : PurrMonoBehaviour
         }
 
         CarLoadoutConfig loadout = PlayerCarLoadoutUtility.ApplySelectedLoadout(spawnedCar, payload);
+        if (spawnedCar.DamageController != null)
+            spawnedCar.DamageController.ResetDamageState(notifyNetwork: false);
         if (instance.TryGetComponent(out SafePredictedTransform predictedTransform))
             PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(instance.transform, predictedTransform);
         UpdateObserverLoadout(player, payload);

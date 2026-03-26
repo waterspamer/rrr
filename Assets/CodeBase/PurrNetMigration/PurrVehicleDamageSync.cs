@@ -372,6 +372,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         public CarDamageController damageController;
         public NetworkVehicleEntity entity;
         public string playerId;
+        public bool useServerDamageAuthority;
         public Action<CarDamageNetworkSnapshot> damageHandler;
         public Action<NetworkVehicleCollisionReport> collisionHandler;
     }
@@ -395,6 +396,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 
     public override void Subscribe(NetworkManager manager, bool asServer)
     {
+        ResetStateCaches();
         activeManager = manager;
         ResolveReferences();
 
@@ -437,6 +439,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         }
 
         activeManager = null;
+        ResetStateCaches();
     }
 
     private void ResolveReferences()
@@ -477,6 +480,7 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 
             int key = damageController.GetInstanceID();
             activeKeys.Add(key);
+            bool useServerDamageAuthority = ShouldUseServerDamageAuthority(damageController, entity);
 
             bool needsRefresh =
                 !serverSubscriptions.TryGetValue(key, out DamageSubscription existing) ||
@@ -484,30 +488,39 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
                 force ||
                 existing.damageController != damageController ||
                 existing.entity != entity ||
-                !string.Equals(existing.playerId, resolvedPlayerId, StringComparison.Ordinal);
+                !string.Equals(existing.playerId, resolvedPlayerId, StringComparison.Ordinal) ||
+                existing.useServerDamageAuthority != useServerDamageAuthority;
 
             if (needsRefresh)
             {
                 if (existing?.damageController != null)
                 {
-                    existing.damageController.DamageMapChanged -= existing.damageHandler;
-                    existing.damageController.NetworkVehicleCollisionDetected -= existing.collisionHandler;
+                    if (existing.damageHandler != null)
+                        existing.damageController.DamageMapChanged -= existing.damageHandler;
+                    if (existing.collisionHandler != null)
+                        existing.damageController.NetworkVehicleCollisionDetected -= existing.collisionHandler;
                 }
 
                 DamageSubscription subscription = new DamageSubscription
                 {
                     damageController = damageController,
                     entity = entity,
-                    playerId = resolvedPlayerId
+                    playerId = resolvedPlayerId,
+                    useServerDamageAuthority = useServerDamageAuthority
                 };
-                subscription.damageHandler = snapshot => HandleServerDamageChanged(subscription, snapshot);
-                subscription.collisionHandler = report => HandleServerCollision(subscription, report);
-                damageController.DamageMapChanged += subscription.damageHandler;
-                damageController.NetworkVehicleCollisionDetected += subscription.collisionHandler;
-                serverSubscriptions[key] = subscription;
-            }
+                if (useServerDamageAuthority)
+                {
+                    subscription.damageHandler = snapshot => HandleServerDamageChanged(subscription, snapshot);
+                    subscription.collisionHandler = report => HandleServerCollision(subscription, report);
+                    damageController.DamageMapChanged += subscription.damageHandler;
+                    damageController.NetworkVehicleCollisionDetected += subscription.collisionHandler;
+                }
 
-            CaptureCurrentSnapshot(resolvedPlayerId, damageController);
+                serverSubscriptions[key] = subscription;
+
+                if (TryCaptureCurrentSnapshot(resolvedPlayerId, damageController, ensureMonotonicRevision: true, out CarDamageNetworkSnapshot initialSnapshot))
+                    BroadcastDamageSnapshot(resolvedPlayerId, initialSnapshot);
+            }
         }
 
         List<int> staleKeys = new List<int>();
@@ -524,11 +537,15 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 
             if (stale.damageController != null)
             {
-                stale.damageController.DamageMapChanged -= stale.damageHandler;
-                stale.damageController.NetworkVehicleCollisionDetected -= stale.collisionHandler;
+                if (stale.damageHandler != null)
+                    stale.damageController.DamageMapChanged -= stale.damageHandler;
+                if (stale.collisionHandler != null)
+                    stale.damageController.NetworkVehicleCollisionDetected -= stale.collisionHandler;
             }
             serverSubscriptions.Remove(staleKeys[i]);
         }
+
+        PruneSnapshotCacheToActivePlayers();
     }
 
     private void RefreshClientSubscriptions(bool force = false)
@@ -572,8 +589,10 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             {
                 if (existing?.damageController != null)
                 {
-                    existing.damageController.DamageMapChanged -= existing.damageHandler;
-                    existing.damageController.NetworkVehicleCollisionDetected -= existing.collisionHandler;
+                    if (existing.damageHandler != null)
+                        existing.damageController.DamageMapChanged -= existing.damageHandler;
+                    if (existing.collisionHandler != null)
+                        existing.damageController.NetworkVehicleCollisionDetected -= existing.collisionHandler;
                 }
 
                 DamageSubscription subscription = new DamageSubscription
@@ -587,6 +606,8 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
                 damageController.DamageMapChanged += subscription.damageHandler;
                 damageController.NetworkVehicleCollisionDetected += subscription.collisionHandler;
                 clientSubscriptions[key] = subscription;
+
+                TryCaptureCurrentSnapshot(resolvedPlayerId, damageController, ensureMonotonicRevision: true, out _);
             }
         }
 
@@ -604,12 +625,16 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
 
             if (stale.damageController != null)
             {
-                stale.damageController.DamageMapChanged -= stale.damageHandler;
-                stale.damageController.NetworkVehicleCollisionDetected -= stale.collisionHandler;
+                if (stale.damageHandler != null)
+                    stale.damageController.DamageMapChanged -= stale.damageHandler;
+                if (stale.collisionHandler != null)
+                    stale.damageController.NetworkVehicleCollisionDetected -= stale.collisionHandler;
             }
 
             clientSubscriptions.Remove(staleKeys[i]);
         }
+
+        PruneSnapshotCacheToActivePlayers();
     }
 
     private void CaptureCurrentSnapshots()
@@ -629,20 +654,26 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
                 continue;
 
             if (TryResolvePlayerId(damageController, entity, out string resolvedPlayerId))
-                CaptureCurrentSnapshot(resolvedPlayerId, damageController);
+                TryCaptureCurrentSnapshot(resolvedPlayerId, damageController, ensureMonotonicRevision: false, out _);
         }
     }
 
-    private void CaptureCurrentSnapshot(string playerId, CarDamageController damageController)
+    private bool TryCaptureCurrentSnapshot(
+        string playerId,
+        CarDamageController damageController,
+        bool ensureMonotonicRevision,
+        out CarDamageNetworkSnapshot snapshot)
     {
+        snapshot = null;
         if (string.IsNullOrWhiteSpace(playerId) || damageController == null)
-            return;
+            return false;
 
         damageController.EnsureNetworkTextureReady();
-        if (!damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot snapshot) || snapshot == null)
-            return;
+        if (!damageController.TryCaptureDamageSnapshot(out CarDamageNetworkSnapshot captured) || captured == null)
+            return false;
 
-        latestSnapshotsByPlayer[playerId] = CloneSnapshot(snapshot);
+        snapshot = StoreLatestSnapshot(playerId, captured, ensureMonotonicRevision);
+        return snapshot != null;
     }
 
     private void HandleServerDamageChanged(DamageSubscription subscription, CarDamageNetworkSnapshot snapshot)
@@ -651,17 +682,11 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
             return;
         if (snapshot == null || snapshot.rawBytes == null || snapshot.rawBytes.Length == 0)
             return;
-        if (latestSnapshotsByPlayer.TryGetValue(subscription.playerId, out CarDamageNetworkSnapshot existing) &&
-            existing != null &&
-            existing.revision >= snapshot.revision)
-        {
-            return;
-        }
 
         string playerId = subscription.playerId;
-        CarDamageNetworkSnapshot cloned = CloneSnapshot(snapshot);
-        latestSnapshotsByPlayer[playerId] = cloned;
-        BroadcastDamageSnapshot(playerId, cloned);
+        CarDamageNetworkSnapshot cloned = StoreLatestSnapshot(playerId, snapshot, ensureMonotonicRevision: true);
+        if (cloned != null)
+            BroadcastDamageSnapshot(playerId, cloned);
     }
 
     private void HandleClientDamageChanged(DamageSubscription subscription, CarDamageNetworkSnapshot snapshot)
@@ -671,8 +696,10 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         if (snapshot == null || snapshot.rawBytes == null || snapshot.rawBytes.Length == 0)
             return;
 
-        CarDamageNetworkSnapshot cloned = CloneSnapshot(snapshot);
-        latestSnapshotsByPlayer[subscription.playerId] = cloned;
+        CarDamageNetworkSnapshot cloned = StoreLatestSnapshot(subscription.playerId, snapshot, ensureMonotonicRevision: true);
+        if (cloned == null)
+            return;
+
         playersManager.SendToServer(PurrVehicleDamageStateMessage.FromSnapshot(subscription.playerId, cloned), Channel.ReliableOrdered);
     }
 
@@ -842,8 +869,10 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         {
             if (subscription != null && subscription.damageController != null)
             {
-                subscription.damageController.DamageMapChanged -= subscription.damageHandler;
-                subscription.damageController.NetworkVehicleCollisionDetected -= subscription.collisionHandler;
+                if (subscription.damageHandler != null)
+                    subscription.damageController.DamageMapChanged -= subscription.damageHandler;
+                if (subscription.collisionHandler != null)
+                    subscription.damageController.NetworkVehicleCollisionDetected -= subscription.collisionHandler;
             }
         }
 
@@ -856,12 +885,107 @@ public sealed class PurrVehicleDamageSync : PurrMonoBehaviour
         {
             if (subscription != null && subscription.damageController != null)
             {
-                subscription.damageController.DamageMapChanged -= subscription.damageHandler;
-                subscription.damageController.NetworkVehicleCollisionDetected -= subscription.collisionHandler;
+                if (subscription.damageHandler != null)
+                    subscription.damageController.DamageMapChanged -= subscription.damageHandler;
+                if (subscription.collisionHandler != null)
+                    subscription.damageController.NetworkVehicleCollisionDetected -= subscription.collisionHandler;
             }
         }
 
         clientSubscriptions.Clear();
+    }
+
+    private void ResetStateCaches()
+    {
+        latestSnapshotsByPlayer.Clear();
+        recentServerCollisions.Clear();
+        recentLocalCollisions.Clear();
+        nextRefreshAt = 0.0f;
+    }
+
+    private CarDamageNetworkSnapshot StoreLatestSnapshot(
+        string playerId,
+        CarDamageNetworkSnapshot snapshot,
+        bool ensureMonotonicRevision)
+    {
+        if (string.IsNullOrWhiteSpace(playerId) || snapshot == null)
+            return null;
+
+        CarDamageNetworkSnapshot cloned = CloneSnapshot(snapshot);
+        if (cloned == null)
+            return null;
+
+        if (ensureMonotonicRevision &&
+            latestSnapshotsByPlayer.TryGetValue(playerId, out CarDamageNetworkSnapshot existing) &&
+            existing != null &&
+            cloned.revision <= existing.revision)
+        {
+            cloned.revision = existing.revision + 1;
+        }
+
+        latestSnapshotsByPlayer[playerId] = cloned;
+        return cloned;
+    }
+
+    private void PruneSnapshotCacheToActivePlayers()
+    {
+        if (latestSnapshotsByPlayer.Count == 0)
+            return;
+
+        NetworkVehicleEntity[] entities =
+            FindObjectsByType<NetworkVehicleEntity>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        HashSet<string> activePlayerIds = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < entities.Length; i++)
+        {
+            NetworkVehicleEntity entity = entities[i];
+            if (entity == null || !entity.gameObject.activeInHierarchy)
+                continue;
+
+            CarDamageController damageController = entity.GetComponent<CarDamageController>();
+            if (damageController == null)
+                damageController = entity.GetComponentInParent<CarDamageController>();
+            if (!TryResolvePlayerId(damageController, entity, out string playerId) || string.IsNullOrWhiteSpace(playerId))
+                continue;
+
+            activePlayerIds.Add(playerId);
+        }
+
+        if (activePlayerIds.Count == 0)
+        {
+            latestSnapshotsByPlayer.Clear();
+            return;
+        }
+
+        List<string> staleKeys = new List<string>();
+        foreach (KeyValuePair<string, CarDamageNetworkSnapshot> pair in latestSnapshotsByPlayer)
+        {
+            if (!activePlayerIds.Contains(pair.Key))
+                staleKeys.Add(pair.Key);
+        }
+
+        for (int i = 0; i < staleKeys.Count; i++)
+            latestSnapshotsByPlayer.Remove(staleKeys[i]);
+    }
+
+    private static bool ShouldUseServerDamageAuthority(CarDamageController damageController, NetworkVehicleEntity entity)
+    {
+        Transform source = damageController != null ? damageController.transform : entity != null ? entity.transform : null;
+        Transform current = source;
+        while (current != null)
+        {
+            PurrVehiclePredictedController predictedController = current.GetComponent<PurrVehiclePredictedController>();
+            if (predictedController != null)
+            {
+                if (!predictedController.owner.HasValue)
+                    return true;
+
+                return predictedController.owner.Value.isBot || predictedController.owner.Value.isServer;
+            }
+
+            current = current.parent;
+        }
+
+        return true;
     }
 
     private static bool TryResolvePlayerId(CarDamageController damageController, NetworkVehicleEntity entity, out string playerId)

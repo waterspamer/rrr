@@ -200,7 +200,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
     private void ConfigureAuthorityState()
     {
         if (damageController != null)
-            damageController.SetCollisionDamageEnabled(predictionManager == null || isServer || IsOwner());
+            damageController.SetCollisionDamageEnabled(predictionManager == null || IsDamageAuthority());
     }
 
     private void RefreshViewBindings()
@@ -235,6 +235,8 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
             return;
 
         PlayerCarLoadoutUtility.ApplySelectedLoadout(playerCar, payload);
+        damageController?.ResetDamageState(notifyNetwork: false);
+        lastAppliedDamageRevision = int.MinValue;
         RefreshPredictionView();
         lastAppliedLocalLoadoutSignature = signature;
         Debug.Log($"PurrVehiclePredictedController: applied local owner loadout '{payload.loadoutName}'.", this);
@@ -266,6 +268,20 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
             return null;
 
         return PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
+    }
+
+    private bool IsDamageAuthority()
+    {
+        if (IsOwner())
+            return true;
+
+        if (!isServer)
+            return false;
+
+        if (!owner.HasValue)
+            return true;
+
+        return owner.Value.isBot || owner.Value.isServer;
     }
 }
 

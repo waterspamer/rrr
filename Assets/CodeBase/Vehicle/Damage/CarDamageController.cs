@@ -25,6 +25,7 @@ public partial class CarDamageController : MonoBehaviour
     [HideInInspector, SerializeField, Range(0.0f, 1.0f)] private float maxColorStep = 0.35f;
     [HideInInspector, SerializeField, Min(0.0f)] private float impulseToRadius = 0.02f;
     [HideInInspector, SerializeField, Min(0.0f)] private float impulseFromSpeedFactor = 0.25f;
+    [HideInInspector, SerializeField, Min(0.0f)] private float collisionRepeatCooldownSeconds = 0.18f;
     [HideInInspector, SerializeField, Min(0)] private int maxRadiusCells = 3;
     [HideInInspector, SerializeField, Min(0.1f)] private float minSpeedForDamageKmh = 5.0f;
     [HideInInspector, SerializeField, Min(1.0f)] private float maxSpeedForDamageKmh = 80.0f;
@@ -92,6 +93,8 @@ public partial class CarDamageController : MonoBehaviour
     private bool computeRefreshQueued;
     private const int VelocitySampleCount = 8;
     private readonly Vector3[] velocitySamples = new Vector3[VelocitySampleCount];
+    private readonly System.Collections.Generic.Dictionary<string, float> recentCollisionTimes =
+        new System.Collections.Generic.Dictionary<string, float>(System.StringComparer.Ordinal);
     private int velocitySampleIndex;
     private int velocitySampleFilled;
     private bool obstacleTagWarningShown;
@@ -201,6 +204,20 @@ public partial class CarDamageController : MonoBehaviour
 
     public void RepairDamage()
     {
+        ResetDamageState(notifyNetwork: true);
+    }
+
+    public void ResetDamageState(bool notifyNetwork = false)
+    {
+        try
+        {
+            EnsureNetworkTextureReady();
+        }
+        catch
+        {
+            return;
+        }
+
         if (cpuTexture == null || runtimeTexture == null)
             return;
 
@@ -216,7 +233,11 @@ public partial class CarDamageController : MonoBehaviour
             ResetVertexColorsAlphaOne();
         }
 
-        NotifyDamageMapChanged();
+        damageRevision = 0;
+        ClearRecentCollisionHistory();
+
+        if (notifyNetwork)
+            NotifyDamageMapChanged();
     }
 
     public void SetCollisionDamageEnabled(bool enabled)
@@ -233,6 +254,9 @@ public partial class CarDamageController : MonoBehaviour
             return;
 
         if (!IsObstacle(collision))
+            return;
+
+        if (!ShouldProcessCollision(collision))
             return;
 
         ApplyCollisionDamage(collision);
@@ -301,6 +325,78 @@ public partial class CarDamageController : MonoBehaviour
         velocitySampleIndex = (velocitySampleIndex + 1) % VelocitySampleCount;
         if (velocitySampleFilled < VelocitySampleCount)
             velocitySampleFilled++;
+    }
+
+    private bool ShouldProcessCollision(Collision collision)
+    {
+        float cooldown = Mathf.Max(0.0f, collisionRepeatCooldownSeconds);
+        if (cooldown <= 0.0001f || collision == null)
+            return true;
+
+        string collisionKey = BuildCollisionCooldownKey(collision);
+        if (string.IsNullOrWhiteSpace(collisionKey))
+            return true;
+
+        float now = Time.unscaledTime;
+        if (recentCollisionTimes.TryGetValue(collisionKey, out float recentTime) &&
+            now - recentTime < cooldown)
+        {
+            return false;
+        }
+
+        recentCollisionTimes[collisionKey] = now;
+        PruneRecentCollisionHistory(now, cooldown);
+        return true;
+    }
+
+    private string BuildCollisionCooldownKey(Collision collision)
+    {
+        Collider col = collision != null ? collision.collider : null;
+        if (col == null)
+            return string.Empty;
+
+        if (TryGetNetworkVehicleEntity(col.transform, out NetworkVehicleEntity vehicleEntity) && vehicleEntity != null)
+        {
+            string playerId = !string.IsNullOrWhiteSpace(vehicleEntity.PlayerId)
+                ? vehicleEntity.PlayerId
+                : vehicleEntity.GetInstanceID().ToString();
+            return "vehicle:" + playerId;
+        }
+
+        Rigidbody otherBody = col.attachedRigidbody;
+        if (otherBody != null)
+            return "rigidbody:" + otherBody.GetInstanceID();
+
+        Transform root = col.transform.root != null ? col.transform.root : col.transform;
+        return root != null ? "obstacle:" + root.GetInstanceID() : string.Empty;
+    }
+
+    private void PruneRecentCollisionHistory(float now, float cooldown)
+    {
+        if (recentCollisionTimes.Count <= 24)
+            return;
+
+        System.Collections.Generic.List<string> staleKeys = null;
+        float maxAge = Mathf.Max(0.1f, cooldown * 2.0f);
+        foreach (System.Collections.Generic.KeyValuePair<string, float> pair in recentCollisionTimes)
+        {
+            if (now - pair.Value <= maxAge)
+                continue;
+
+            staleKeys ??= new System.Collections.Generic.List<string>();
+            staleKeys.Add(pair.Key);
+        }
+
+        if (staleKeys == null)
+            return;
+
+        for (int i = 0; i < staleKeys.Count; i++)
+            recentCollisionTimes.Remove(staleKeys[i]);
+    }
+
+    private void ClearRecentCollisionHistory()
+    {
+        recentCollisionTimes.Clear();
     }
 
     private void OnRenderObject()

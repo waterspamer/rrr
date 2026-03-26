@@ -23,6 +23,7 @@ public partial class CarDamageController
         maxColorStep = settings.maxColorStep;
         impulseToRadius = settings.impulseToRadius;
         impulseFromSpeedFactor = settings.impulseFromSpeedFactor;
+        collisionRepeatCooldownSeconds = settings.collisionRepeatCooldownSeconds;
         maxRadiusCells = settings.maxRadiusCells;
         minSpeedForDamageKmh = settings.minSpeedForDamageKmh;
         maxSpeedForDamageKmh = settings.maxSpeedForDamageKmh;
@@ -71,6 +72,7 @@ public partial class CarDamageController
             maxColorStep = maxColorStep,
             impulseToRadius = impulseToRadius,
             impulseFromSpeedFactor = impulseFromSpeedFactor,
+            collisionRepeatCooldownSeconds = collisionRepeatCooldownSeconds,
             maxRadiusCells = maxRadiusCells,
             minSpeedForDamageKmh = minSpeedForDamageKmh,
             maxSpeedForDamageKmh = maxSpeedForDamageKmh,
@@ -109,6 +111,7 @@ public partial class CarDamageController
         maxColorStep = tuning.maxColorStep;
         impulseToRadius = tuning.impulseToRadius;
         impulseFromSpeedFactor = tuning.impulseFromSpeedFactor;
+        collisionRepeatCooldownSeconds = tuning.collisionRepeatCooldownSeconds;
         maxRadiusCells = tuning.maxRadiusCells;
         minSpeedForDamageKmh = tuning.minSpeedForDamageKmh;
         maxSpeedForDamageKmh = tuning.maxSpeedForDamageKmh;

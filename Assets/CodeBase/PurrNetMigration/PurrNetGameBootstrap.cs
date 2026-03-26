@@ -290,6 +290,9 @@ public sealed class PurrNetGameBootstrap : MonoBehaviour
         SetPrivateField(predictedTransform, "_interpolationSettings", CreateRuntimeInterpolationSettings());
         SetPrivateField(predictedRigidbody, "_rigidbody", runtimeBody);
         SetPrivateField(predictedRigidbody, "_eventMask", PhysicsEventMask.None);
+
+        if (runtimeTemplateCar.DamageController != null)
+            runtimeTemplateCar.DamageController.ResetDamageState(notifyNetwork: false);
     }
 
     private static TransformInterpolationSettings CreateRuntimeInterpolationSettings()

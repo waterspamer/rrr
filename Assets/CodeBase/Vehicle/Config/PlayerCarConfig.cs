@@ -73,6 +73,7 @@ public class PlayerCarDamageSettings
     [Range(0.0f, 1.0f)] public float maxColorStep = 0.35f;
     [Min(0.0f)] public float impulseToRadius = 0.02f;
     [Min(0.0f)] public float impulseFromSpeedFactor = 0.25f;
+    [Min(0.0f)] public float collisionRepeatCooldownSeconds = 0.18f;
     [Min(0)] public int maxRadiusCells = 3;
     [Min(0.1f)] public float minSpeedForDamageKmh = 5.0f;
     [Min(1.0f)] public float maxSpeedForDamageKmh = 80.0f;
@@ -129,6 +130,7 @@ public class PlayerCarDamageSettings
         maxColorStep = Mathf.Clamp01(maxColorStep);
         impulseToRadius = Mathf.Max(0.0f, impulseToRadius);
         impulseFromSpeedFactor = Mathf.Max(0.0f, impulseFromSpeedFactor);
+        collisionRepeatCooldownSeconds = Mathf.Clamp(collisionRepeatCooldownSeconds, 0.0f, 2.0f);
         maxRadiusCells = Mathf.Max(0, maxRadiusCells);
         minSpeedForDamageKmh = Mathf.Max(0.1f, minSpeedForDamageKmh);
         maxSpeedForDamageKmh = Mathf.Max(1.0f, maxSpeedForDamageKmh);
@@ -167,6 +169,7 @@ public sealed class CarDamageRuntimeTuning
     public float maxColorStep = 0.35f;
     public float impulseToRadius = 0.02f;
     public float impulseFromSpeedFactor = 0.25f;
+    public float collisionRepeatCooldownSeconds = 0.18f;
     public int maxRadiusCells = 3;
     public float minSpeedForDamageKmh = 5.0f;
     public float maxSpeedForDamageKmh = 80.0f;
@@ -195,6 +198,7 @@ public sealed class CarDamageRuntimeTuning
         maxColorStep = Mathf.Clamp01(maxColorStep);
         impulseToRadius = Mathf.Max(0.0f, impulseToRadius);
         impulseFromSpeedFactor = Mathf.Max(0.0f, impulseFromSpeedFactor);
+        collisionRepeatCooldownSeconds = Mathf.Clamp(collisionRepeatCooldownSeconds, 0.0f, 2.0f);
         maxRadiusCells = Mathf.Max(0, maxRadiusCells);
         minSpeedForDamageKmh = Mathf.Max(0.1f, minSpeedForDamageKmh);
         maxSpeedForDamageKmh = Mathf.Max(minSpeedForDamageKmh + 0.1f, maxSpeedForDamageKmh);
@@ -235,6 +239,7 @@ public sealed class CarDamageRuntimeTuning
                Approximately(maxColorStep, other.maxColorStep) &&
                Approximately(impulseToRadius, other.impulseToRadius) &&
                Approximately(impulseFromSpeedFactor, other.impulseFromSpeedFactor) &&
+               Approximately(collisionRepeatCooldownSeconds, other.collisionRepeatCooldownSeconds) &&
                maxRadiusCells == other.maxRadiusCells &&
                Approximately(minSpeedForDamageKmh, other.minSpeedForDamageKmh) &&
                Approximately(maxSpeedForDamageKmh, other.maxSpeedForDamageKmh) &&
@@ -275,6 +280,7 @@ public sealed class CarDamageRuntimeTuning
             maxColorStep = settings.maxColorStep,
             impulseToRadius = settings.impulseToRadius,
             impulseFromSpeedFactor = settings.impulseFromSpeedFactor,
+            collisionRepeatCooldownSeconds = settings.collisionRepeatCooldownSeconds,
             maxRadiusCells = settings.maxRadiusCells,
             minSpeedForDamageKmh = settings.minSpeedForDamageKmh,
             maxSpeedForDamageKmh = settings.maxSpeedForDamageKmh,

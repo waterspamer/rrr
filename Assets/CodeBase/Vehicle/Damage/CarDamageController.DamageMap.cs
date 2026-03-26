@@ -452,6 +452,7 @@ public partial class CarDamageController
 
     private void OnDisable()
     {
+        ClearRecentCollisionHistory();
         ReleaseDeformTargets();
     }
 

@@ -540,18 +540,23 @@ public class FollowCarCamera : MonoBehaviour
         if (impulse01 <= 0.0001f)
             return;
 
-        // Small bumps should barely register, while heavy impacts ramp up fast.
-        float response = impulse01 * impulse01;
-        float strength = Mathf.Lerp(collisionMinShakeStrength, collisionMaxShakeStrength, impulse01) *
-                         Mathf.SmoothStep(0.0f, 1.0f, impulse01) *
-                         response;
+        // Tiny contacts should be nearly invisible; noticeable shake starts only after a clear impact.
+        float response = Mathf.Pow(impulse01, 3.5f);
+        if (response <= 0.0025f)
+            return;
+
+        float maxStrength = Mathf.Lerp(
+            Mathf.Max(0.0f, collisionMinShakeStrength),
+            Mathf.Max(collisionMinShakeStrength, collisionMaxShakeStrength),
+            Mathf.Sqrt(impulse01));
+        float strength = maxStrength * response;
         if (strength <= 0.0001f)
             return;
 
         float duration = Mathf.Lerp(
-            Mathf.Max(0.01f, collisionShakeDuration * 0.35f),
+            Mathf.Max(0.01f, collisionShakeDuration * 0.12f),
             Mathf.Max(0.01f, collisionShakeDuration),
-            Mathf.SmoothStep(0.0f, 1.0f, impulse01));
+            Mathf.Sqrt(response));
 
         PlayShake(
             collisionPositionShake * strength,
