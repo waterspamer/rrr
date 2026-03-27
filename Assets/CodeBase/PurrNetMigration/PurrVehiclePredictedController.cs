@@ -195,6 +195,7 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
 
         bool usePredictedSimulation = predictionManager != null;
         simulationBridge.ConfigurePrediction(usePredictedSimulation);
+        ConfigurePredictionViewWriter();
     }
 
     private void ConfigureAuthorityState()
@@ -272,7 +273,18 @@ public sealed class PurrVehiclePredictedController : PredictedIdentity<PurrVehic
         if (predictedTransform == null)
             return null;
 
-        return PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
+        Transform graphicsRoot = PurrVehicleGraphicsBindingUtility.RefreshGraphicsBinding(this, predictedTransform);
+        ConfigurePredictionViewWriter();
+        return graphicsRoot;
+    }
+
+    private void ConfigurePredictionViewWriter()
+    {
+        if (predictedTransform == null)
+            return;
+
+        bool usesArcadePresentation = simulationBridge != null && simulationBridge.UsesArcadeController;
+        predictedTransform.updateGraphics = !usesArcadePresentation;
     }
 
     private bool IsDamageAuthority()
